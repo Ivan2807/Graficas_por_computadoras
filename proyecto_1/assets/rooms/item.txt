@@ -1,0 +1,29 @@
+id=potion_hp
+name=Pocion de Vida
+type=Health
+flat=25.0
+mult=1.0
+
+id=damage_booster
+name=Amplificador de Danio
+type=Damage
+flat=5.0
+mult=1.5
+
+id=energy_shield
+name=Escudo Táctico
+type=Shield
+flat=50.0
+mult=1.0
+
+id=fragment_bomb
+name=Bomba de Fragmentacion
+type=SingleUse
+flat=100.0
+mult=1.0
+
+id=level_key
+name=Llave de Salida
+type=Key
+flat=0.0
+mult=1.0
