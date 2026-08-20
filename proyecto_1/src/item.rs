@@ -83,3 +83,11 @@ impl Item {
         items
     }
 }
+
+/// Un Item ya colocado en el mundo, esperando a que el jugador lo recoja.
+#[derive(Debug, Clone)]
+pub struct ItemPickup {
+    pub item: Item,
+    pub x: f32,
+    pub y: f32,
+}

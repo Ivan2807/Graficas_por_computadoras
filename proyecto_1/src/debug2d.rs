@@ -1,4 +1,6 @@
 use crate::colors::wall_color;
+use crate::enemy::Enemy;
+use crate::item::ItemPickup;
 use crate::level::{Level, Tile};
 use crate::player::Player;
 use raylib::prelude::*;
@@ -14,8 +16,11 @@ pub fn render_2d(
     d: &mut RaylibDrawHandle,
     level: &Level,
     player: &Player,
+    enemies: &[Enemy],
+    item_pickups: &[ItemPickup],
     screen_w: i32,
     screen_h: i32,
+    debug_mode: bool,
 ) {
     let map_px_w = level.width as f32 * TILE_PX;
     let map_px_h = level.height as f32 * TILE_PX;
@@ -28,6 +33,7 @@ pub fn render_2d(
             let color = match level.get(x as i32, y as i32) {
                 Tile::Wall(id) => wall_color(id),
                 Tile::Door => Color::new(230, 220, 120, 255), // amarillo = puerta
+                Tile::LockedDoor => Color::new(120, 72, 40, 255), // café = puerta cerrada
                 Tile::Empty => Color::new(35, 35, 40, 255),   // piso
             };
             d.draw_rectangle(
@@ -76,6 +82,39 @@ pub fn render_2d(
         Color::RED,
     );
 
+    // enemigos
+    // enemigos: solo se dibujan los que estan en un cuarto ya explorado
+    // (para no verlos "a traves de la pared" antes de haber entrado)
+    for enemy in enemies {
+        let cell = (
+            (enemy.x / level.cell_w as f32).floor().max(0.0) as usize,
+            (enemy.y / level.cell_h as f32).floor().max(0.0) as usize,
+        );
+        if !level.is_room_explored(cell) {
+            continue;
+        }
+        enemy.render_2d(d, TILE_PX, ox, oy);
+    }
+
+    // items en el suelo (rombo dorado)
+    for pickup in item_pickups {
+        let px = (ox + pickup.x * TILE_PX) as i32;
+        let py = (oy + pickup.y * TILE_PX) as i32;
+        let r = 5;
+        d.draw_triangle(
+            Vector2::new(px as f32, (py - r) as f32),
+            Vector2::new((px - r) as f32, py as f32),
+            Vector2::new((px + r) as f32, py as f32),
+            Color::GOLD,
+        );
+        d.draw_triangle(
+            Vector2::new((px - r) as f32, py as f32),
+            Vector2::new(px as f32, (py + r) as f32),
+            Vector2::new((px + r) as f32, py as f32),
+            Color::GOLD,
+        );
+    }
+
     d.draw_text(
         &format!("Salas generadas: {}", level.room_cells.len()),
         10,
@@ -84,4 +123,18 @@ pub fn render_2d(
         Color::WHITE,
     );
     d.draw_text("Modo 2D (presiona 0 para volver a 3D)", 10, 65, 18, Color::WHITE);
+
+    if debug_mode {
+        d.draw_text(
+            &format!(
+                "[DEBUG] enemigos: {}  items: {}  (N = spawnear enemigo, P = recarga infinita)",
+                enemies.len(),
+                item_pickups.len()
+            ),
+            10,
+            90,
+            18,
+            Color::YELLOW,
+        );
+    }
 }

@@ -45,9 +45,9 @@ pub fn render_minimap(
             let color = match level.get(x as i32, y as i32) {
                 Tile::Wall(id) => wall_color(id),
                 Tile::Door => Color::new(230, 220, 120, 255),
+                Tile::LockedDoor => Color::new(120, 72, 40, 255),
                 Tile::Empty => Color::new(50, 50, 60, 255),
             };
-
             d.draw_rectangle(
                 (ox + x as f32 * TILE_PX) as i32,
                 (oy + y as f32 * TILE_PX) as i32,

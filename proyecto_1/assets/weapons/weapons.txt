@@ -1,0 +1,35 @@
+id=pistol
+name=Pistola
+damage=10.0
+clip_size=12
+reserve=48
+ 
+id=shotgun
+name=Escopeta
+damage=35.0
+clip_size=6
+reserve=24
+ 
+id=smg
+name=Subfusil
+damage=8.0
+clip_size=25
+reserve=100
+ 
+id=rifle
+name=Rifle de Asalto
+damage=18.0
+clip_size=30
+reserve=90
+ 
+id=sniper
+name=Rifle de Precision
+damage=75.0
+clip_size=5
+reserve=20
+ 
+id=rocket
+name=Lanzacohetes
+damage=100.0
+clip_size=1
+reserve=6
