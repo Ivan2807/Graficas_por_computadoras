@@ -1,90 +1,94 @@
 use raylib::prelude::*;
+use crate::level::LevelMap;
 
+#[derive(Clone, Debug)]
 pub struct Enemy {
+    pub id: usize,
+    pub home_room: (usize, usize),
+    pub is_mega: bool,
     pub x: f32,
     pub y: f32,
-    pub health: i32,
-    pub max_health: i32,
-    pub is_alive: bool,
+    pub health: f32,
+    pub max_health: f32,
+    pub speed: f32,
     pub attack_damage: i32,
-    pub attack_range: f32,
     pub attack_cooldown: f32,
-    attack_timer: f32,
+    pub corpse_color: Color,
 }
 
 impl Enemy {
-    pub fn new(x: f32, y: f32, health: i32) -> Self {
+    pub fn new(id: usize, x: f32, y: f32, home_room: (usize, usize)) -> Self {
+        // Asignar un color único y llamativo para el cadáver según su ID
+        let corpse_colors = [
+            Color::ORANGE, Color::PURPLE, Color::LIME, Color::PINK,
+            Color::MAROON, Color::TEAL, Color::GOLD, Color::DARKBLUE,
+        ];
+        let corpse_color = corpse_colors[id % corpse_colors.len()];
+
         Self {
+            id,
+            home_room,
+            is_mega: false,
             x,
             y,
-            health,
-            max_health: health,
-            is_alive: true,
-            attack_damage: 8,
-            attack_range: 1.2,
-            attack_cooldown: 1.0,
-            attack_timer: 0.0,
+            health: 75.0,
+            max_health: 75.0,
+            speed: 0.6,
+            attack_damage: 15,
+            attack_cooldown: 0.0,
+            corpse_color,
         }
     }
 
-    pub fn take_damage(&mut self, damage: i32) {
-        if !self.is_alive {
-            return;
-        }
-        self.health -= damage;
-        if self.health <= 0 {
-            self.health = 0;
-            self.is_alive = false;
-        }
+    pub fn mega(id: usize, x: f32, y: f32, home_room: (usize, usize), health: f32) -> Self {
+        let mut enemy = Self::new(id, x, y, home_room);
+        enemy.is_mega = true;
+        enemy.health = health;
+        enemy.max_health = health;
+        enemy.speed = 0.7;
+        enemy.attack_damage = 60;
+        enemy.corpse_color = Color::PURPLE;
+        enemy
     }
 
-    ///Si el jugador esta en rango y ya
-    /// paso el cooldown, devuelve el daño que debe recibir.
-    pub fn update_attack(&mut self, dt: f32, player_x: f32, player_y: f32) -> Option<i32> {
-        if !self.is_alive {
-            return None;
+    pub fn is_alive(&self) -> bool {
+        self.health > 0.0
+    }
+
+    pub fn update(&mut self, dt: f32, player_x: f32, player_y: f32, map: &LevelMap) -> bool {
+        if self.attack_cooldown > 0.0 {
+            self.attack_cooldown -= dt;
         }
-        if self.attack_timer > 0.0 {
-            self.attack_timer -= dt;
-            return None;
+
+        if !self.is_alive() {
+            return false; // El enemigo muerto no se mueve ni ataca
         }
+
+        // Persecución hacia el jugador
         let dx = player_x - self.x;
         let dy = player_y - self.y;
         let dist = (dx * dx + dy * dy).sqrt();
-        if dist <= self.attack_range {
-            self.attack_timer = self.attack_cooldown;
-            Some(self.attack_damage)
-        } else {
-            None
+
+        // Si el jugador está cerca pero no encima, avanzar
+        if dist > 0.4 {
+            let step_x = (dx / dist) * self.speed * dt;
+            let step_y = (dy / dist) * self.speed * dt;
+
+            // Simple verificación de pared
+            if !map.is_wall_or_locked(self.x + step_x, self.y) {
+                self.x += step_x;
+            }
+            if !map.is_wall_or_locked(self.x, self.y + step_y) {
+                self.y += step_y;
+            }
         }
-    }
 
-    pub fn get_room_cell(&self, cell_w: usize, cell_h: usize) -> (i32, i32) {
-        ((self.x / cell_w as f32) as i32, (self.y / cell_h as f32) as i32)
-    }
-
-    pub fn render_2d(&self, d: &mut RaylibDrawHandle, scale: f32, ox: f32, oy: f32) {
-        if !self.is_alive {
-            return;
+        // Atacar si está al alcance
+        if dist < 0.6 && self.attack_cooldown <= 0.0 {
+            self.attack_cooldown = 1.2;
+            return true; // Aplica daño
         }
-        let px = (ox + self.x * scale) as i32;
-        let py = (oy + self.y * scale) as i32;
-        let size = 16;
 
-        d.draw_rectangle(px - size / 2, py - size / 2, size, size, Color::RED);
-        d.draw_rectangle_lines(px - size / 2, py - size / 2, size, size, Color::MAROON);
-
-        let bar_w = 20;
-        let bar_h = 4;
-        let hp_ratio = (self.health as f32 / self.max_health as f32).clamp(0.0, 1.0);
-
-        d.draw_rectangle(px - bar_w / 2, py - size / 2 - 8, bar_w, bar_h, Color::BLACK);
-        d.draw_rectangle(
-            px - bar_w / 2,
-            py - size / 2 - 8,
-            (bar_w as f32 * hp_ratio) as i32,
-            bar_h,
-            Color::GREEN,
-        );
+        false
     }
 }

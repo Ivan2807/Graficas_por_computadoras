@@ -42,7 +42,7 @@ pub fn render_minimap(
                 continue;
             }
 
-            let color = match level.get(x as i32, y as i32) {
+            let color = match level.get(x, y) {
                 Tile::Wall(id) => wall_color(id),
                 Tile::Door => Color::new(230, 220, 120, 255),
                 Tile::LockedDoor => Color::new(120, 72, 40, 255),
@@ -59,8 +59,8 @@ pub fn render_minimap(
     }
 
     // Dibujar la posición del jugador
-    let px = ox + player.x * TILE_PX;
-    let py = oy + player.y * TILE_PX;
+    let px = ox + player.pos_x * TILE_PX;
+    let py = oy + player.pos_y * TILE_PX;
 
     d.draw_circle(px as i32, py as i32, 3.0, Color::RED);
 

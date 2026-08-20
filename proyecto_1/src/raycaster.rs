@@ -34,7 +34,7 @@ pub fn render(fb: &mut Framebuffer, level: &Level, player: &Player, textures: &T
         let camera_x = col as f32 / fb.width as f32 - 0.5;
         let ray_angle = player.angle + camera_x * FOV;
 
-        let hit = cast_ray(level, player.x, player.y, ray_angle);
+        let hit = cast_ray(level, player.pos_x, player.pos_y, ray_angle);
         let corrected = (hit.distance * (ray_angle - player.angle).cos()).max(0.0001);
 
         let wall_height = (fb.height as f32 / corrected).min(fb.height as f32 * 4.0);
@@ -103,7 +103,7 @@ pub fn cast_ray(level: &Level, px: f32, py: f32, angle: f32) -> RayHit {
             side = 1;
         }
 
-        match level.get(map_x, map_y) {
+        match level.get_tile(map_x, map_y) {
             Tile::Wall(id) => {
                 wall_id = id;
                 break;

@@ -141,13 +141,7 @@ impl Weapon {
 
     pub fn render(&self, d: &mut RaylibDrawHandle, screen_w: i32, game_h: f32) {
         let center_x = screen_w / 2;
-        let center_y = (game_h / 2.0) as i32;
-
         let reticle_x = center_x + self.drag_x as i32;
-        let reticle_y = center_y + self.drag_y as i32;
-
-        d.draw_circle_lines(reticle_x, reticle_y, 6.0, Color::GREEN);
-        d.draw_pixel(reticle_x, reticle_y, Color::RED);
 
         let base_w = 100;
         let base_h = 130;
@@ -172,5 +166,12 @@ impl Weapon {
             d.draw_circle(reticle_x, weapon_y - 25, 20.0, Color::GOLD);
             d.draw_circle(reticle_x, weapon_y - 25, 12.0, Color::YELLOW);
         }
+    }
+
+    pub fn render_crosshair(&self, d: &mut RaylibDrawHandle, screen_w: i32, game_h: f32) {
+        let center_x = screen_w / 2 + self.drag_x as i32;
+        let center_y = (game_h / 2.0) as i32 + self.drag_y as i32;
+        d.draw_circle_lines(center_x, center_y, 14.0, Color::GREEN);
+        d.draw_circle(center_x, center_y, 3.0, Color::RED);
     }
 }

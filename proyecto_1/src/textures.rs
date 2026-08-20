@@ -1,5 +1,7 @@
 use raylib::prelude::*;
 
+const WALL_TEXTURE_SIZE: i32 = 32;
+
 pub struct WallTexture {
     pub width: i32,
     pub height: i32,
@@ -8,8 +10,10 @@ pub struct WallTexture {
 
 impl WallTexture {
     pub fn load(path: &str) -> Self {
-        let img = Image::load_image(path)
+        let mut img = Image::load_image(path)
             .unwrap_or_else(|_| panic!("no se pudo cargar la textura {}", path));
+        // Las paredes usan texturas pixel-art normalizadas a 32x32.
+        img.resize_nn(WALL_TEXTURE_SIZE, WALL_TEXTURE_SIZE);
         let width = img.width;
         let height = img.height;
         
