@@ -17,6 +17,7 @@ use minimap::render_minimap;
 use player::Player;
 use raycaster::cast_ray;
 use raylib::prelude::*;
+use raylib::audio::RaylibAudio;
 use std::collections::HashSet;
 use textures::Textures;
 use ui::{render_hud, PlayerStats, RadarSweep};
@@ -25,13 +26,91 @@ use weapon::{Weapon, WeaponDef};
 const SCREEN_W: i32 = 1280;
 const SCREEN_H: i32 = 720;
 
+#[derive(Clone, Copy, PartialEq)]
+enum GameMode {
+    Normal,
+    Hard,
+    Taylor,
+}
+
+fn choose_mode(rl: &mut RaylibHandle, thread: &RaylibThread) -> Option<GameMode> {
+    let mut screen = 0u8;
+    let audio = RaylibAudio::init_audio_device().ok();
+    let mut menu_music = audio.as_ref()
+        .and_then(|audio| audio.new_music("assets/Songs/Intro.m4a").ok());
+    if let Some(track) = menu_music.as_mut() { track.play_stream(); }
+    while !rl.window_should_close() {
+        let mouse = rl.get_mouse_position();
+        let clicked = rl.is_mouse_button_pressed(MouseButton::MOUSE_BUTTON_LEFT);
+        if let Some(track) = menu_music.as_mut() { track.update_stream(); }
+        let mut d = rl.begin_drawing(thread);
+        d.clear_background(Color::new(12, 12, 20, 255));
+        d.draw_text(if screen == 0 { "INTRO" } else { "MODO DE JUEGO" }, 470, 100, 42, Color::WHITE);
+
+        if screen == 0 {
+            draw_menu_button(&mut d, 440, 260, 400, 70, "JUGAR", mouse);
+            draw_menu_button(&mut d, 440, 360, 400, 70, "SALIR", mouse);
+            if clicked {
+                if mouse_in(mouse, 440, 260, 400, 70) {
+                    screen = 1;
+                    if let Some(track) = menu_music.as_mut() { track.stop_stream(); }
+                    menu_music = audio.as_ref()
+                        .and_then(|audio| audio.new_music("assets/Songs/(Audio) Taylor Swift - Blank Space.m4a").ok());
+                    if let Some(track) = menu_music.as_mut() { track.play_stream(); }
+                }
+                if mouse_in(mouse, 440, 360, 400, 70) {
+                    if let Some(track) = menu_music.as_mut() {
+                        track.stop_stream();
+                        if let Ok(exit_track) = audio.as_ref().unwrap().new_music("assets/Songs/Shake It Off.m4a") {
+                            exit_track.play_stream();
+                        }
+                    }
+                    return None;
+                }
+            }
+        } else {
+            draw_menu_button(&mut d, 360, 210, 560, 65, "NORMAL", mouse);
+            draw_menu_button(&mut d, 360, 300, 560, 65, "DIFICIL", mouse);
+            draw_menu_button(&mut d, 360, 390, 560, 65, "TAYLOR", mouse);
+            if clicked {
+                if mouse_in(mouse, 360, 210, 560, 65) { return Some(GameMode::Normal); }
+                if mouse_in(mouse, 360, 300, 560, 65) { return Some(GameMode::Hard); }
+                if mouse_in(mouse, 360, 390, 560, 65) { return Some(GameMode::Taylor); }
+            }
+        }
+    }
+    None
+}
+
+fn mouse_in(mouse: Vector2, x: i32, y: i32, width: i32, height: i32) -> bool {
+    mouse.x >= x as f32 && mouse.x <= (x + width) as f32 && mouse.y >= y as f32 && mouse.y <= (y + height) as f32
+}
+
+fn draw_menu_button(d: &mut RaylibDrawHandle, x: i32, y: i32, width: i32, height: i32, label: &str, mouse: Vector2) {
+    let hovered = mouse_in(mouse, x, y, width, height);
+    let color = if hovered { Color::PURPLE } else { Color::DARKGRAY };
+    d.draw_rectangle(x, y, width, height, color);
+    d.draw_rectangle_lines(x, y, width, height, Color::RAYWHITE);
+    d.draw_text(label, x + width / 2 - label.len() as i32 * 7, y + 20, 24, Color::WHITE);
+}
+
 fn main() {
     let (mut rl, thread) = raylib::init()
         .size(SCREEN_W, SCREEN_H)
         .title("Doom Rooms - Raycasting Survival")
         .build();
     rl.set_target_fps(60);
+    let Some(game_mode) = choose_mode(&mut rl, &thread) else { return; };
     rl.disable_cursor();
+    let audio = RaylibAudio::init_audio_device().ok();
+    let music_path = match game_mode {
+        GameMode::Taylor => "assets/Songs/(Audio) Taylor Swift - Blank Space.m4a",
+        GameMode::Normal | GameMode::Hard => "assets/Songs/Normal.m4a",
+    };
+    let mut music = audio.as_ref().and_then(|audio| audio.new_music(music_path).ok());
+    if let Some(track) = music.as_mut() {
+        track.play_stream();
+    }
 
     let templates = load_room_templates("assets/rooms");
     let final_template = load_final_room("assets/rooms/room_final.txt");
@@ -53,7 +132,7 @@ fn main() {
         spawn.0 as f32 * map.cell_w as f32 + map.cell_w as f32 / 2.0,
         spawn.1 as f32 * map.cell_h as f32 + map.cell_h as f32 / 2.0,
     );
-    let mut enemies = spawn_enemies(&map);
+    let mut enemies = spawn_enemies(&map, game_mode);
     let mut pickups = load_pickups(&map, final_room);
     let mut cleared_rooms = HashSet::new();
     let mut rewarded_red_rooms = HashSet::new();
@@ -63,8 +142,10 @@ fn main() {
     let mut radar = RadarSweep::new();
     let mut weapon_index = 0usize;
     let mut weapon = Weapon::new(&weapon_defs[0].id, &weapon_defs[0].name);
-    let pistol_idle_sprite = rl.load_texture(&thread, "assets/sprites/Pistola_1.png").ok();
-    let pistol_fire_sprite = rl.load_texture(&thread, "assets/sprites/Pistola_2.png").ok();
+    let weapon_sprites = load_weapon_sprites(&mut rl, &thread, &weapon_defs);
+    let enemy_sprite_1 = rl.load_texture(&thread, "assets/sprites/Enemy_p1.png").ok();
+    let enemy_sprite_2 = rl.load_texture(&thread, "assets/sprites/Enemy_p2.png").ok();
+    let tailor_sprite = rl.load_texture(&thread, "assets/sprites/tailor.png").ok();
     let mut hit_marker_timer = 0.0f32;
     let mut automatic_timer = 0.0f32;
     let mut global_message_timer = 0.0f32;
@@ -80,6 +161,9 @@ fn main() {
 
     while !rl.window_should_close() {
         let dt = rl.get_frame_time();
+        if let Some(track) = music.as_mut() {
+            track.update_stream();
+        }
 
         if transition_timer > 0.0 {
             transition_timer -= dt;
@@ -95,7 +179,7 @@ fn main() {
                 let next_spawn = map.room_cells.first().copied().unwrap_or((0, 0));
                 player.pos_x = next_spawn.0 as f32 * map.cell_w as f32 + map.cell_w as f32 / 2.0;
                 player.pos_y = next_spawn.1 as f32 * map.cell_h as f32 + map.cell_h as f32 / 2.0;
-                enemies = spawn_enemies(&map);
+                enemies = spawn_enemies(&map, game_mode);
                 pickups = load_pickups(&map, next_final_room);
                 cleared_rooms.clear();
                 rewarded_red_rooms.clear();
@@ -279,17 +363,36 @@ fn main() {
             .cloned()
             .collect();
         radar.update(dt, player.pos_x, player.pos_y, player.angle, &room_enemies);
+        if game_mode == GameMode::Taylor && !radar.pings.is_empty() {
+            if let Some(track) = music.as_mut() {
+                if !track.is_stream_playing() {
+                    track.play_stream();
+                }
+            }
+        }
         let fps = rl.get_fps();
 
         let mut d = rl.begin_drawing(&thread);
         render_raycast(&mut d, &map, &player, &textures, SCREEN_W, SCREEN_H - ui::HUD_HEIGHT);
-        render_visible_enemies(&mut d, &map, &player, &enemies, &radar, SCREEN_W, SCREEN_H - ui::HUD_HEIGHT);
+        render_visible_enemies(
+            &mut d,
+            &map,
+            &player,
+            &enemies,
+            &radar,
+            game_mode,
+            enemy_sprite_1.as_ref(),
+            enemy_sprite_2.as_ref(),
+            tailor_sprite.as_ref(),
+            SCREEN_W,
+            SCREEN_H - ui::HUD_HEIGHT,
+        );
         render_radar_reveals(&mut d, &radar, SCREEN_W, SCREEN_H - ui::HUD_HEIGHT);
         render_minimap(&mut d, &map, &player, SCREEN_W);
         render_weapon_sprite(
             &mut d,
-            pistol_idle_sprite.as_ref(),
-            pistol_fire_sprite.as_ref(),
+            weapon_sprites[weapon_index].0.as_ref(),
+            weapon_sprites[weapon_index].1.as_ref(),
             &weapon,
             SCREEN_W,
             SCREEN_H,
@@ -328,7 +431,29 @@ fn load_weapon_defs() -> Vec<WeaponDef> {
     defs
 }
 
-fn spawn_enemies(map: &Level) -> Vec<Enemy> {
+fn load_weapon_sprites(
+    rl: &mut RaylibHandle,
+    thread: &RaylibThread,
+    definitions: &[WeaponDef],
+) -> Vec<(Option<Texture2D>, Option<Texture2D>)> {
+    definitions.iter().map(|definition| {
+        let prefix = match definition.id.as_str() {
+            "pistol" => "Pistola",
+            "shotgun" => "Escopeta",
+            "smg" => "Smg",
+            "rifle" => "Assault",
+            "sniper" => "Sniper",
+            "rocket" => "Rocket",
+            _ => "Pistola",
+        };
+        (
+            rl.load_texture(thread, &format!("assets/sprites/{}_1.png", prefix)).ok(),
+            rl.load_texture(thread, &format!("assets/sprites/{}_2.png", prefix)).ok(),
+        )
+    }).collect()
+}
+
+fn spawn_enemies(map: &Level, mode: GameMode) -> Vec<Enemy> {
     let mut enemies = Vec::new();
     let mut next_id = 0;
     for &(cx, cy) in map.room_cells.iter().skip(1) {
@@ -340,7 +465,13 @@ fn spawn_enemies(map: &Level) -> Vec<Enemy> {
             }
             let position_index = random_range(0, positions.len() as i32 - 1) as usize;
             let (x, y) = positions.swap_remove(position_index);
-            enemies.push(Enemy::new(next_id, x, y, (cx, cy)));
+            let mut enemy = Enemy::new(next_id, x, y, (cx, cy));
+            if mode == GameMode::Hard {
+                enemy.health *= 1.1;
+                enemy.max_health *= 1.1;
+                enemy.speed *= 1.1;
+            }
+            enemies.push(enemy);
             next_id += 1;
         }
     }
@@ -669,6 +800,10 @@ fn render_visible_enemies(
     player: &Player,
     enemies: &[Enemy],
     radar: &RadarSweep,
+    mode: GameMode,
+    enemy_sprite_1: Option<&Texture2D>,
+    enemy_sprite_2: Option<&Texture2D>,
+    tailor_sprite: Option<&Texture2D>,
     width: i32,
     height: i32,
 ) {
@@ -687,6 +822,7 @@ fn render_visible_enemies(
         if blink_phase % 2 != 0 { continue; }
         let screen_x = width / 2 + (relative / raycaster::FOV * width as f32) as i32;
         let size = (height as f32 / distance).clamp(8.0, 150.0) as i32;
+        let body_y = height / 2 - size / 2;
         let body_color = if enemy.is_mega {
             Color::PURPLE
         } else if enemy.is_alive() {
@@ -694,7 +830,18 @@ fn render_visible_enemies(
         } else {
             enemy.corpse_color
         };
-        let body_y = height / 2 - size / 2;
+        if mode == GameMode::Taylor {
+            if let Some(texture) = tailor_sprite {
+                let phase = (ping.alpha * if enemy.is_mega { 28.0 } else { 14.0 }).floor() as i32;
+                let scale = (size as f32 / texture.width as f32).max(0.1);
+                d.draw_texture_ex(texture, Vector2::new(screen_x as f32 - size as f32 / 2.0, body_y as f32), 0.0, scale, Color::WHITE);
+                if phase < 0 { continue; }
+            }
+        } else if let Some(texture) = if (ping.alpha * if enemy.is_mega { 28.0 } else { 14.0 }).floor() as i32 % 2 == 0 { enemy_sprite_1 } else { enemy_sprite_2 } {
+            let scale = (size as f32 / texture.width as f32).max(0.1);
+            d.draw_texture_ex(texture, Vector2::new(screen_x as f32 - size as f32 / 2.0, body_y as f32), 0.0, scale, Color::WHITE);
+            continue;
+        }
         let body_height = if enemy.is_alive() { size } else { (size / 3).max(4) };
         d.draw_rectangle(screen_x - size / 3, body_y, (size / 3).max(4), body_height, body_color);
         d.draw_circle(screen_x, body_y, (size / 3).max(4) as f32, body_color);
