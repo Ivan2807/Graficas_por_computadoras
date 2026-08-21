@@ -48,11 +48,19 @@ struct RunState {
     visited_rooms: HashSet<(usize, usize)>,
     key_chance: i32,
     rooms_since_key: u8,
+    unlocked_weapons: HashSet<String>,
+    weapon_chance: i32,
+    rooms_since_weapon: u8,
     level_timer: f32,
     mega_stage: u32,
     mega_id: Option<usize>,
     space_uses: u8,
     escape_mode: bool,
+    explosion: Option<Explosion>,
+}
+
+struct Explosion {
+    timer: f32,
 }
 
 fn choose_mode(rl: &mut RaylibHandle, thread: &RaylibThread, audio: Option<&RaylibAudio>) -> Option<GameMode> {
@@ -158,7 +166,7 @@ fn show_controls(rl: &mut RaylibHandle, thread: &RaylibThread, mode: GameMode) -
 fn main() {
     let (mut rl, thread) = raylib::init()
         .size(SCREEN_W, SCREEN_H)
-        .title("Doom Rooms - Raycasting Survival")
+        .title("Noisy Ditch - Raycasting Survival")
         .build();
     rl.set_target_fps(60);
     let audio = RaylibAudio::init_audio_device().ok();
@@ -191,7 +199,9 @@ fn main() {
     let item_defs = Item::parse_from_file("assets/items/item.txt");
     let textures = Textures::load_all();
 
-    let mut run = new_run(&templates, &final_template, &weapon_defs, &item_defs, game_mode, 1);
+    let mut unlocked_weapons = HashSet::new();
+    unlocked_weapons.insert(weapon_defs[0].id.clone());
+    let mut run = new_run(&templates, &final_template, &weapon_defs, &item_defs, game_mode, 1, &unlocked_weapons, 50, 0);
 
     let mut radar = RadarSweep::new();
     let mut weapon_index = 0usize;
@@ -201,6 +211,7 @@ fn main() {
     let enemy_sprite_2 = rl.load_texture(&thread, "assets/sprites/Enemy_p2.png").ok();
     let tailor_sprite = rl.load_texture(&thread, "assets/sprites/tailor.png").ok();
     let muelto_sprite = rl.load_texture(&thread, "assets/sprites/Muelto.png").ok();
+    let bomb_texture = rl.load_texture(&thread, "assets/textures/Bomba.png").ok();
 
     let mut hit_marker_timer = 0.0f32;
     let mut automatic_timer = 0.0f32;
@@ -242,7 +253,9 @@ fn main() {
                 );
             }
             if rl.is_key_pressed(KeyboardKey::KEY_ENTER) {
-                run = new_run(&templates, &final_template, &weapon_defs, &item_defs, game_mode, 1);
+                unlocked_weapons.clear();
+                unlocked_weapons.insert(weapon_defs[0].id.clone());
+                run = new_run(&templates, &final_template, &weapon_defs, &item_defs, game_mode, 1, &unlocked_weapons, 50, 0);
                 weapon_index = 0;
                 weapon = Weapon::new(&weapon_defs[0].id, &weapon_defs[0].name);
                 global_message.clear();
@@ -276,6 +289,9 @@ fn main() {
                     &item_defs,
                     game_mode,
                     run.level_number + 1,
+                    &run.unlocked_weapons,
+                    run.weapon_chance,
+                    run.rooms_since_weapon,
                 );
             }
             continue;
@@ -297,8 +313,10 @@ fn main() {
         .enumerate()
         {
             if index < weapon_defs.len() && rl.is_key_pressed(*key) {
-                weapon_index = index;
-                weapon.switch_to(&weapon_defs[index].id, &weapon_defs[index].name);
+                if run.unlocked_weapons.contains(&weapon_defs[index].id) {
+                    weapon_index = index;
+                    weapon.switch_to(&weapon_defs[index].id, &weapon_defs[index].name);
+                }
             }
         }
 
@@ -313,6 +331,7 @@ fn main() {
                 apply_room_entry_reward(&item_defs, &weapon_defs, &mut run.stats);
                 if room != run.map.room_cells[0] {
                     run.rooms_since_key += 1;
+                    run.rooms_since_weapon += 1;
                 }
                 if room != run.map.room_cells[0]
                     && run.rooms_since_key >= 2
@@ -326,6 +345,20 @@ fn main() {
                 } else if room != run.map.room_cells[0] && run.rooms_since_key >= 2 {
                     run.key_chance = (run.key_chance + 25).min(100);
                     run.rooms_since_key = 0;
+                }
+                let unlocked_weapon = if room != run.map.room_cells[0] && run.rooms_since_weapon >= 2 {
+                    try_unlock_weapon(&weapon_defs, &mut run.unlocked_weapons, run.weapon_chance)
+                } else {
+                    None
+                };
+                if let Some((weapon_name, weapon_number)) = unlocked_weapon {
+                    run.weapon_chance = 50;
+                    run.rooms_since_weapon = 0;
+                    global_message = format!("ARMA OBTENIDA: {} - PRESIONA {}", weapon_name, weapon_number);
+                    global_message_timer = 1.5;
+                } else if room != run.map.room_cells[0] && run.rooms_since_weapon >= 2 {
+                    run.weapon_chance = (run.weapon_chance + 25).min(100);
+                    run.rooms_since_weapon = 0;
                 }
             }
         }
@@ -346,7 +379,8 @@ fn main() {
             reload_weapon(&mut run.stats, current_weapon);
         }
         if rl.is_key_pressed(KeyboardKey::KEY_F) {
-            if throw_bomb(&mut run.map, &mut run.enemies, &mut run.stats, &run.player) {
+            if throw_bomb(&mut run.map, &mut run.enemies, &mut run.stats, &run.player).is_some() {
+                run.explosion = Some(Explosion { timer: 0.5 });
                 global_message = "BOMBA DETONADA".to_string();
                 global_message_timer = 1.0;
             }
@@ -389,6 +423,12 @@ fn main() {
             }
         }
         weapon.update(dt);
+        if let Some(explosion) = run.explosion.as_mut() {
+            explosion.timer = (explosion.timer - dt).max(0.0);
+            if explosion.timer <= 0.0 {
+                run.explosion = None;
+            }
+        }
         hit_marker_timer = (hit_marker_timer - dt).max(0.0);
         global_message_timer = (global_message_timer - dt).max(0.0);
 
@@ -504,6 +544,7 @@ fn main() {
             SCREEN_W,
             SCREEN_H,
         );
+        render_explosion(&mut d, run.explosion.as_ref(), bomb_texture.as_ref(), SCREEN_W, SCREEN_H - ui::HUD_HEIGHT);
         render_hud(
             &mut d,
             SCREEN_W,
@@ -534,6 +575,9 @@ fn new_run(
     item_defs: &[Item],
     mode: GameMode,
     level_number: u32,
+    unlocked_weapons: &HashSet<String>,
+    weapon_chance: i32,
+    rooms_since_weapon: u8,
 ) -> RunState {
     let grid_size = (3 + level_number).min(9) as usize;
     let min_rooms = ((grid_size * grid_size) / 2).max(6);
@@ -571,11 +615,15 @@ fn new_run(
         visited_rooms: HashSet::new(),
         key_chance: 25,
         rooms_since_key: 0,
+        unlocked_weapons: unlocked_weapons.clone(),
+        weapon_chance,
+        rooms_since_weapon,
         level_timer: 90.0,
         mega_stage: 0,
         mega_id: None,
         space_uses: 0,
         escape_mode: false,
+        explosion: None,
     }
 }
 
@@ -650,6 +698,25 @@ fn apply_room_entry_reward(item_defs: &[Item], weapon_defs: &[WeaponDef], stats:
     for definition in weapon_defs {
         *stats.reserve_ammo.entry(definition.id.clone()).or_insert(0) += 2;
     }
+}
+
+fn try_unlock_weapon(
+    weapon_defs: &[WeaponDef],
+    unlocked_weapons: &mut HashSet<String>,
+    chance: i32,
+) -> Option<(String, usize)> {
+    let available: Vec<(usize, &WeaponDef)> = weapon_defs
+        .iter()
+        .enumerate()
+        .skip(1)
+        .filter(|(_, definition)| !unlocked_weapons.contains(&definition.id))
+        .collect();
+    if available.is_empty() || random_range(0, 99) >= chance {
+        return None;
+    }
+    let (index, definition) = available[random_range(0, available.len() as i32 - 1) as usize];
+    unlocked_weapons.insert(definition.id.clone());
+    Some((definition.name.clone(), index + 1))
 }
 
 fn spawn_mega(map: &Level, player: &Player, stage: u32) -> Option<Enemy> {
@@ -733,9 +800,9 @@ fn use_health_item(stats: &mut PlayerStats) -> bool {
     true
 }
 
-fn throw_bomb(map: &mut Level, enemies: &mut [Enemy], stats: &mut PlayerStats, player: &Player) -> bool {
+fn throw_bomb(map: &mut Level, enemies: &mut [Enemy], stats: &mut PlayerStats, player: &Player) -> Option<(f32, f32)> {
     let Some(index) = stats.inventory.iter().position(|item| item.item_type == ItemType::SingleUse) else {
-        return false;
+        return None;
     };
     stats.inventory.remove(index);
 
@@ -770,7 +837,33 @@ fn throw_bomb(map: &mut Level, enemies: &mut [Enemy], stats: &mut PlayerStats, p
             }
         }
     }
-    true
+    Some((explosion_x, explosion_y))
+}
+
+fn render_explosion(
+    d: &mut RaylibDrawHandle,
+    explosion: Option<&Explosion>,
+    bomb_texture: Option<&Texture2D>,
+    screen_w: i32,
+    screen_h: i32,
+) {
+    let Some(explosion) = explosion else { return; };
+    let progress = (explosion.timer / 0.5).clamp(0.0, 1.0);
+    let center_x = screen_w / 2;
+    let center_y = screen_h / 2;
+    let radius = 70.0 + 45.0 * (1.0 - progress);
+    d.draw_circle(center_x, center_y, radius, Color::new(255, 90, 20, 90));
+    d.draw_circle_lines(center_x, center_y, radius, Color::ORANGE);
+    if let Some(texture) = bomb_texture {
+        let size = 150.0 + 50.0 * (1.0 - progress);
+        d.draw_texture_ex(
+            texture,
+            Vector2::new(center_x as f32 - size / 2.0, center_y as f32 - size / 2.0),
+            0.0,
+            size / texture.width as f32,
+            Color::new(255, 255, 255, 255),
+        );
+    }
 }
 
 fn has_line_of_sight(map: &Level, from_x: f32, from_y: f32, to_x: f32, to_y: f32) -> bool {
