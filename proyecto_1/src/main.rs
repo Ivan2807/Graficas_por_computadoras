@@ -33,16 +33,50 @@ enum GameMode {
     Taylor,
 }
 
-fn choose_mode(rl: &mut RaylibHandle, thread: &RaylibThread) -> Option<GameMode> {
+
+struct RunState {
+    level_number: u32,
+    map: Level,
+    player: Player,
+    enemies: Vec<Enemy>,
+    pickups: Vec<ItemPickup>,
+    stats: PlayerStats,
+    red_rooms: HashSet<(usize, usize)>,
+    cleared_rooms: HashSet<(usize, usize)>,
+    rewarded_red_rooms: HashSet<(usize, usize)>,
+    rewarded_enemies: HashSet<usize>,
+    visited_rooms: HashSet<(usize, usize)>,
+    key_chance: i32,
+    rooms_since_key: u8,
+    level_timer: f32,
+    mega_stage: u32,
+    mega_id: Option<usize>,
+    space_uses: u8,
+    escape_mode: bool,
+}
+
+fn choose_mode(rl: &mut RaylibHandle, thread: &RaylibThread, audio: Option<&RaylibAudio>) -> Option<GameMode> {
     let mut screen = 0u8;
-    let audio = RaylibAudio::init_audio_device().ok();
-    let mut menu_music = audio.as_ref()
-        .and_then(|audio| audio.new_music("assets/Songs/Intro.m4a").ok());
+    let mut exit_timer = 0.0f32;
+    let mut menu_music = audio.and_then(|audio| audio.new_music("assets/Songs/Intro.mp3").ok());
     if let Some(track) = menu_music.as_mut() { track.play_stream(); }
+
     while !rl.window_should_close() {
+        let dt = rl.get_frame_time();
+        if screen == 2 {
+            exit_timer -= dt;
+            if let Some(track) = menu_music.as_mut() { track.update_stream(); }
+            let mut d = rl.begin_drawing(thread);
+            d.clear_background(Color::BLACK);
+            d.draw_text("SALIR", 560, 300, 42, Color::WHITE);
+            d.draw_text("Gracias por jugar", 500, 360, 22, Color::GRAY);
+            if exit_timer <= 0.0 { return None; }
+            continue;
+        }
         let mouse = rl.get_mouse_position();
         let clicked = rl.is_mouse_button_pressed(MouseButton::MOUSE_BUTTON_LEFT);
         if let Some(track) = menu_music.as_mut() { track.update_stream(); }
+
         let mut d = rl.begin_drawing(thread);
         d.clear_background(Color::new(12, 12, 20, 255));
         d.draw_text(if screen == 0 { "INTRO" } else { "MODO DE JUEGO" }, 470, 100, 42, Color::WHITE);
@@ -54,18 +88,15 @@ fn choose_mode(rl: &mut RaylibHandle, thread: &RaylibThread) -> Option<GameMode>
                 if mouse_in(mouse, 440, 260, 400, 70) {
                     screen = 1;
                     if let Some(track) = menu_music.as_mut() { track.stop_stream(); }
-                    menu_music = audio.as_ref()
-                        .and_then(|audio| audio.new_music("assets/Songs/(Audio) Taylor Swift - Blank Space.m4a").ok());
+                    menu_music = audio.and_then(|audio| audio.new_music("assets/Songs/(Audio) Taylor Swift - Blank Space.mp3").ok());
                     if let Some(track) = menu_music.as_mut() { track.play_stream(); }
                 }
                 if mouse_in(mouse, 440, 360, 400, 70) {
-                    if let Some(track) = menu_music.as_mut() {
-                        track.stop_stream();
-                        if let Ok(exit_track) = audio.as_ref().unwrap().new_music("assets/Songs/Shake It Off.m4a") {
-                            exit_track.play_stream();
-                        }
-                    }
-                    return None;
+                    screen = 2;
+                    exit_timer = 3.0;
+                    if let Some(track) = menu_music.as_mut() { track.stop_stream(); }
+                    menu_music = audio.and_then(|audio| audio.new_music("assets/Songs/Salir.mp3").ok());
+                    if let Some(track) = menu_music.as_mut() { track.play_stream(); }
                 }
             }
         } else {
@@ -94,51 +125,74 @@ fn draw_menu_button(d: &mut RaylibDrawHandle, x: i32, y: i32, width: i32, height
     d.draw_text(label, x + width / 2 - label.len() as i32 * 7, y + 20, 24, Color::WHITE);
 }
 
+fn show_controls(rl: &mut RaylibHandle, thread: &RaylibThread, mode: GameMode) -> bool {
+    let mode_name = match mode {
+        GameMode::Normal => "NORMAL",
+        GameMode::Hard => "DIFICIL",
+        GameMode::Taylor => "TAYLOR",
+    };
+    while !rl.window_should_close() {
+        let enter_pressed = rl.is_key_pressed(KeyboardKey::KEY_ENTER);
+        let mut d = rl.begin_drawing(thread);
+        d.clear_background(Color::new(8, 10, 16, 255));
+        d.draw_text(&format!("CONTROLES Y OBJETIVO - {}", mode_name), 330, 55, 34, Color::WHITE);
+        d.draw_text("W A S D  -  Moverse", 300, 145, 24, Color::RAYWHITE);
+        d.draw_text("Mouse  -  Apuntar y mover la camara", 300, 185, 24, Color::RAYWHITE);
+        d.draw_text("1 - 6  -  Seleccionar armas", 300, 225, 24, Color::RAYWHITE);
+        d.draw_text("Click izquierdo  -  Disparar", 300, 265, 24, Color::RAYWHITE);
+        d.draw_text("Click derecho  -  Abrir o cerrar puertas", 300, 305, 24, Color::RAYWHITE);
+        d.draw_text("F  -  Lanzar una bomba", 300, 345, 24, Color::RAYWHITE);
+        d.draw_text("R  -  Recargar", 300, 385, 24, Color::RAYWHITE);
+        d.draw_text("ESPACIO  -  Curarse hasta 5 veces por nivel", 300, 425, 24, Color::RAYWHITE);
+        d.draw_text("La bazooka puede destruir puertas", 300, 465, 24, Color::GOLD);
+        d.draw_text("OBJETIVO", 300, 530, 26, Color::GOLD);
+        d.draw_text("Sobrevive, encuentra las 3 llaves y llega al cuarto de salida.", 300, 570, 22, Color::RAYWHITE);
+        d.draw_text("Presiona ENTER para comenzar", 430, 650, 22, Color::LIME);
+        if enter_pressed {
+            return true;
+        }
+    }
+    false
+}
+
 fn main() {
     let (mut rl, thread) = raylib::init()
         .size(SCREEN_W, SCREEN_H)
         .title("Doom Rooms - Raycasting Survival")
         .build();
     rl.set_target_fps(60);
-    let Some(game_mode) = choose_mode(&mut rl, &thread) else { return; };
-    rl.disable_cursor();
     let audio = RaylibAudio::init_audio_device().ok();
-    let music_path = match game_mode {
-        GameMode::Taylor => "assets/Songs/(Audio) Taylor Swift - Blank Space.m4a",
-        GameMode::Normal | GameMode::Hard => "assets/Songs/Normal.m4a",
-    };
-    let mut music = audio.as_ref().and_then(|audio| audio.new_music(music_path).ok());
-    if let Some(track) = music.as_mut() {
-        track.play_stream();
+
+    let Some(game_mode) = choose_mode(&mut rl, &thread, audio.as_ref()) else { return; };
+    if !show_controls(&mut rl, &thread, game_mode) {
+        return;
     }
+    rl.disable_cursor();
+
+    let taylor_playlist = [
+        "assets/Songs/(Audio) Taylor Swift - Blank Space.mp3",
+        "assets/Songs/(Audio) Taylor Swift - Shake It Off.mp3",
+        "assets/Songs/(Audio) Taylor Swift - You Belong With Me.mp3",
+    ];
+    let normal_playlist = ["assets/Songs/Normal.mp3"];
+    let playlist: &[&str] = if game_mode == GameMode::Taylor {
+        &taylor_playlist
+    } else {
+        &normal_playlist
+    };
+    let mut track_index = 0usize;
+    let mut music = audio.as_ref().and_then(|a| a.new_music(playlist[track_index]).ok());
+    if let Some(track) = music.as_mut() { track.play_stream(); }
+    let gunshot = audio.as_ref().and_then(|a| a.new_sound("assets/Songs/Gunshot-Sound-Effect.mp3").ok());
 
     let templates = load_room_templates("assets/rooms");
     let final_template = load_final_room("assets/rooms/room_final.txt");
-    let mut grid_size = 4usize;
-    let mut map = generate_level(&templates, grid_size, grid_size, 8, 75, random_range);
-    let final_room = *map.room_cells.last().unwrap();
-    map.replace_room(final_room, &final_template);
-    let mut red_rooms = apply_red_rooms(&mut map, &templates, final_room);
-    let textures = Textures::load_all();
     let weapon_defs = load_weapon_defs();
-    let mut stats = PlayerStats::default();
-    for def in &weapon_defs {
-        stats.clip_ammo.insert(def.id.clone(), def.clip_size);
-        stats.reserve_ammo.insert(def.id.clone(), def.reserve);
-    }
-
-    let spawn = map.room_cells.first().copied().unwrap_or((0, 0));
-    let mut player = Player::new(
-        spawn.0 as f32 * map.cell_w as f32 + map.cell_w as f32 / 2.0,
-        spawn.1 as f32 * map.cell_h as f32 + map.cell_h as f32 / 2.0,
-    );
-    let mut enemies = spawn_enemies(&map, game_mode);
-    let mut pickups = load_pickups(&map, final_room);
-    let mut cleared_rooms = HashSet::new();
-    let mut rewarded_red_rooms = HashSet::new();
-    let mut rewarded_enemies = HashSet::new();
-    let mut visited_rooms = HashSet::new();
     let item_defs = Item::parse_from_file("assets/items/item.txt");
+    let textures = Textures::load_all();
+
+    let mut run = new_run(&templates, &final_template, &weapon_defs, &item_defs, game_mode, 1);
+
     let mut radar = RadarSweep::new();
     let mut weapon_index = 0usize;
     let mut weapon = Weapon::new(&weapon_defs[0].id, &weapon_defs[0].name);
@@ -146,60 +200,90 @@ fn main() {
     let enemy_sprite_1 = rl.load_texture(&thread, "assets/sprites/Enemy_p1.png").ok();
     let enemy_sprite_2 = rl.load_texture(&thread, "assets/sprites/Enemy_p2.png").ok();
     let tailor_sprite = rl.load_texture(&thread, "assets/sprites/tailor.png").ok();
+    let muelto_sprite = rl.load_texture(&thread, "assets/sprites/Muelto.png").ok();
+
     let mut hit_marker_timer = 0.0f32;
     let mut automatic_timer = 0.0f32;
     let mut global_message_timer = 0.0f32;
     let mut global_message = String::new();
-    let mut key_chance = 25i32;
-    let mut rooms_since_key = 0u8;
-    let mut level_timer = 90.0f32;
-    let mut mega_stage = 0u32;
-    let mut mega_id = None;
-    let mut space_uses = 0u8;
-    let mut escape_mode = false;
     let mut transition_timer = 0.0f32;
+    let mut game_over = false;
 
     while !rl.window_should_close() {
         let dt = rl.get_frame_time();
+
+        // Musica en loop continuo: al terminar la pista actual, pasa a la
+        // siguiente de la playlist (nunca se queda en silencio).
         if let Some(track) = music.as_mut() {
             track.update_stream();
+            if !track.is_stream_playing() {
+                let next_track = if run.mega_id.is_some() && game_mode != GameMode::Taylor {
+                    "assets/Songs/Salir.mp3"
+                } else {
+                    track_index = (track_index + 1) % playlist.len();
+                    playlist[track_index]
+                };
+                music = audio.as_ref().and_then(|a| a.new_music(next_track).ok());
+                if let Some(next_track) = music.as_mut() { next_track.play_stream(); }
+            }
+        }
+
+        if game_over {
+            {
+                let mut d = rl.begin_drawing(&thread);
+                d.clear_background(Color::new(10, 0, 0, 255));
+                d.draw_text("HAS MUERTO", SCREEN_W / 2 - 150, SCREEN_H / 2 - 60, 50, Color::RED);
+                d.draw_text(
+                    "Presiona ENTER para reintentar desde el Nivel 1",
+                    SCREEN_W / 2 - 280,
+                    SCREEN_H / 2 + 10,
+                    22,
+                    Color::WHITE,
+                );
+            }
+            if rl.is_key_pressed(KeyboardKey::KEY_ENTER) {
+                run = new_run(&templates, &final_template, &weapon_defs, &item_defs, game_mode, 1);
+                weapon_index = 0;
+                weapon = Weapon::new(&weapon_defs[0].id, &weapon_defs[0].name);
+                global_message.clear();
+                global_message_timer = 0.0;
+                hit_marker_timer = 0.0;
+                game_over = false;
+            }
+            continue;
         }
 
         if transition_timer > 0.0 {
             transition_timer -= dt;
-            let mut d = rl.begin_drawing(&thread);
-            d.clear_background(Color::BLACK);
-            d.draw_text("NIVEL 2", SCREEN_W / 2 - 70, SCREEN_H / 2 - 20, 40, Color::WHITE);
+            {
+                let mut d = rl.begin_drawing(&thread);
+                d.clear_background(Color::BLACK);
+                d.draw_text(
+                    &format!("NIVEL {}", run.level_number + 1),
+                    SCREEN_W / 2 - 90,
+                    SCREEN_H / 2 - 20,
+                    40,
+                    Color::WHITE,
+                );
+            }
             if transition_timer <= 0.0 {
-                grid_size = 5;
-                map = generate_level(&templates, grid_size, grid_size, 12, 75, random_range);
-                let next_final_room = *map.room_cells.last().unwrap();
-                map.replace_room(next_final_room, &final_template);
-                red_rooms = apply_red_rooms(&mut map, &templates, next_final_room);
-                let next_spawn = map.room_cells.first().copied().unwrap_or((0, 0));
-                player.pos_x = next_spawn.0 as f32 * map.cell_w as f32 + map.cell_w as f32 / 2.0;
-                player.pos_y = next_spawn.1 as f32 * map.cell_h as f32 + map.cell_h as f32 / 2.0;
-                enemies = spawn_enemies(&map, game_mode);
-                pickups = load_pickups(&map, next_final_room);
-                cleared_rooms.clear();
-                rewarded_red_rooms.clear();
-                rewarded_enemies.clear();
-                visited_rooms.clear();
-                stats.keys = 0;
-                key_chance = 25;
-                rooms_since_key = 0;
-                level_timer = 90.0;
-                mega_stage = 0;
-                mega_id = None;
-                space_uses = 0;
-                escape_mode = false;
+                // Progresion continua: el nivel (y la cuadricula) sube cada
+                // vez que se completa uno; ya no se queda fijo en el 2.
+                run = new_run(
+                    &templates,
+                    &final_template,
+                    &weapon_defs,
+                    &item_defs,
+                    game_mode,
+                    run.level_number + 1,
+                );
             }
             continue;
         }
 
         let mouse_delta = rl.get_mouse_delta();
         let camera_delta = weapon.apply_look(mouse_delta.x, mouse_delta.y, dt, 90.0, 55.0, 0.0);
-        player.angle = (player.angle + camera_delta * 0.0025).rem_euclid(std::f32::consts::TAU);
+        run.player.angle = (run.player.angle + camera_delta * 0.0025).rem_euclid(std::f32::consts::TAU);
 
         for (index, key) in [
             KeyboardKey::KEY_ONE,
@@ -220,56 +304,56 @@ fn main() {
 
         let current_weapon = &weapon_defs[weapon_index];
 
-        player.handle_input(&rl, dt, &map);
-        map.update_doors(dt);
-        map.update_exploration(player.pos_x, player.pos_y);
-        let current_room = map.room_at(player.pos_x, player.pos_y);
+        run.player.handle_input(&rl, dt, &run.map);
+        run.map.update_doors(dt);
+        run.map.update_exploration(run.player.pos_x, run.player.pos_y);
+        let current_room = run.map.room_at(run.player.pos_x, run.player.pos_y);
         if let Some(room) = current_room {
-            if visited_rooms.insert(room) {
-                apply_room_entry_reward(&item_defs, &weapon_defs, &mut stats);
-                if room != map.room_cells[0] {
-                    rooms_since_key += 1;
+            if run.visited_rooms.insert(room) {
+                apply_room_entry_reward(&item_defs, &weapon_defs, &mut run.stats);
+                if room != run.map.room_cells[0] {
+                    run.rooms_since_key += 1;
                 }
-                if room != map.room_cells[0]
-                    && rooms_since_key >= 2
-                    && random_range(0, 99) < key_chance
+                if room != run.map.room_cells[0]
+                    && run.rooms_since_key >= 2
+                    && random_range(0, 99) < run.key_chance
                 {
-                    stats.keys = (stats.keys + 1).min(3);
-                    key_chance = 25;
-                    rooms_since_key = 0;
-                    global_message = format!("LLAVE ENCONTRADA: {}/3", stats.keys);
+                    run.stats.keys = (run.stats.keys + 1).min(3);
+                    run.key_chance = 25;
+                    run.rooms_since_key = 0;
+                    global_message = format!("LLAVE ENCONTRADA: {}/3", run.stats.keys);
                     global_message_timer = 1.5;
-                } else if room != map.room_cells[0] && rooms_since_key >= 2 {
-                    key_chance = (key_chance + 25).min(100);
-                    rooms_since_key = 0;
+                } else if room != run.map.room_cells[0] && run.rooms_since_key >= 2 {
+                    run.key_chance = (run.key_chance + 25).min(100);
+                    run.rooms_since_key = 0;
                 }
             }
         }
         apply_red_room_rewards(
-            &map,
-            map.room_at(player.pos_x, player.pos_y),
-            &red_rooms,
+            &run.map,
+            run.map.room_at(run.player.pos_x, run.player.pos_y),
+            &run.red_rooms,
             &item_defs,
             &weapon_defs,
-            &mut stats,
-            &mut rewarded_red_rooms,
+            &mut run.stats,
+            &mut run.rewarded_red_rooms,
         );
 
         if rl.is_mouse_button_pressed(MouseButton::MOUSE_BUTTON_RIGHT) {
-            interact_with_door(&mut map, &player);
+            interact_with_door(&mut run.map, &run.player);
         }
         if rl.is_key_pressed(KeyboardKey::KEY_R) {
-            reload_weapon(&mut stats, current_weapon);
+            reload_weapon(&mut run.stats, current_weapon);
         }
         if rl.is_key_pressed(KeyboardKey::KEY_F) {
-            if throw_bomb(&mut map, &mut enemies, &mut stats, &player) {
+            if throw_bomb(&mut run.map, &mut run.enemies, &mut run.stats, &run.player) {
                 global_message = "BOMBA DETONADA".to_string();
                 global_message_timer = 1.0;
             }
         }
-        if rl.is_key_pressed(KeyboardKey::KEY_SPACE) && space_uses < 5 {
-            if use_health_item(&mut stats) {
-                space_uses += 1;
+        if rl.is_key_pressed(KeyboardKey::KEY_SPACE) && run.space_uses < 5 {
+            if use_health_item(&mut run.stats) {
+                run.space_uses += 1;
                 global_message = "VIDA APLICADA".to_string();
                 global_message_timer = 1.0;
             }
@@ -282,113 +366,136 @@ fn main() {
                 && rl.is_mouse_button_down(MouseButton::MOUSE_BUTTON_LEFT)
                 && automatic_timer <= 0.0);
         if should_fire {
-            weapon.is_shooting = true;
-            if fire_weapon(&mut map, &mut enemies, &mut stats, &mut weapon, current_weapon, &player) {
-                hit_marker_timer = 0.18;
+            let clip_before = *run.stats.clip_ammo.get(&current_weapon.id).unwrap_or(&0);
+            if clip_before > 0 {
+                weapon.is_shooting = true;
+                if fire_weapon(&mut run.map, &mut run.enemies, &mut run.stats, &mut weapon, current_weapon, &run.player) {
+                    hit_marker_timer = 0.18;
+                }
+                let clip_after = *run.stats.clip_ammo.get(&current_weapon.id).unwrap_or(&clip_before);
+                if clip_after < clip_before {
+                    if let Some(sound) = gunshot.as_ref() {
+                        sound.play();
+                    }
+                }
+            } else {
+                weapon.is_shooting = false;
             }
             automatic_timer = weapon_fire_interval(current_weapon);
         }
-        for enemy in &enemies {
-            if !enemy.is_alive() && rewarded_enemies.insert(enemy.id) {
-                grant_kill_ammo(&mut stats, &weapon_defs);
+        for enemy in &run.enemies {
+            if !enemy.is_alive() && run.rewarded_enemies.insert(enemy.id) {
+                grant_kill_ammo(&mut run.stats, &weapon_defs);
             }
         }
         weapon.update(dt);
         hit_marker_timer = (hit_marker_timer - dt).max(0.0);
         global_message_timer = (global_message_timer - dt).max(0.0);
 
-        level_timer -= dt;
-        if level_timer <= 0.0 && mega_id.is_none() {
-            if let Some(mega) = spawn_mega(&map, &player, mega_stage) {
-                mega_id = Some(mega.id);
-                enemies.push(mega);
+        run.level_timer -= dt;
+        if run.level_timer <= 0.0 && run.mega_id.is_none() {
+            if let Some(mega) = spawn_mega(&run.map, &run.player, run.mega_stage) {
+                run.mega_id = Some(mega.id);
+                run.enemies.push(mega);
+                if game_mode != GameMode::Taylor {
+                    if let Some(track) = music.as_mut() { track.stop_stream(); }
+                    music = audio.as_ref().and_then(|a| a.new_music("assets/Songs/Salir.mp3").ok());
+                    if let Some(track) = music.as_mut() { track.play_stream(); }
+                }
                 global_message = "MEGA-MONSTRUO DETECTADO".to_string();
                 global_message_timer = 2.0;
             }
         }
 
-        if let Some(id) = mega_id {
-            if enemies.iter().any(|enemy| enemy.id == id && !enemy.is_alive()) {
-                mega_id = None;
-                mega_stage += 1;
-                level_timer = 60.0;
+        if let Some(id) = run.mega_id {
+            if run.enemies.iter().any(|enemy| enemy.id == id && !enemy.is_alive()) {
+                run.mega_id = None;
+                run.mega_stage += 1;
+                run.level_timer = 60.0;
+                if let Some(track) = music.as_mut() { track.stop_stream(); }
+                music = audio.as_ref().and_then(|a| a.new_music(playlist[track_index]).ok());
+                if let Some(track) = music.as_mut() { track.play_stream(); }
                 global_message = "MEGA ELIMINADO: 60 SEGUNDOS".to_string();
                 global_message_timer = 2.0;
             }
         }
 
-        for enemy in &mut enemies {
-            let player_room = map.room_at(player.pos_x, player.pos_y);
-            let enemy_room = map.room_at(enemy.x, enemy.y);
-            let can_use_room_path = enemy.is_mega || (player_room.is_some()
-                && enemy_room.is_some()
-                && map.rooms_are_open(player_room.unwrap(), enemy_room.unwrap()));
-            if enemy.is_mega && escape_mode {
+        for enemy in &mut run.enemies {
+            let player_room = run.map.room_at(run.player.pos_x, run.player.pos_y);
+            let enemy_room = run.map.room_at(enemy.x, enemy.y);
+            let can_use_room_path = enemy.is_mega
+                || (player_room.is_some()
+                    && enemy_room.is_some()
+                    && run.map.rooms_are_open(player_room.unwrap(), enemy_room.unwrap()));
+            if enemy.is_mega && run.escape_mode {
                 enemy.speed = 1.0;
                 enemy.attack_damage = 75;
             }
-            if can_use_room_path && enemy.update(dt, player.pos_x, player.pos_y, &map) {
-                stats.take_damage(enemy.attack_damage);
+            if can_use_room_path && enemy.update(dt, run.player.pos_x, run.player.pos_y, &run.map) {
+                run.stats.take_damage(enemy.attack_damage);
             }
         }
-        heal_cleared_rooms(&map, &enemies, &red_rooms, &mut stats, &mut cleared_rooms);
+        heal_cleared_rooms(&run.map, &run.enemies, &run.red_rooms, &mut run.stats, &mut run.cleared_rooms);
 
-        pickups.retain(|pickup| {
-            let collected = distance(player.pos_x, player.pos_y, pickup.x, pickup.y) < 0.7;
+        // --- Muerte del jugador: pantalla de reintento en el proximo frame ---
+        if run.stats.health <= 0 {
+            game_over = true;
+            continue;
+        }
+
+        run.pickups.retain(|pickup| {
+            let collected = distance(run.player.pos_x, run.player.pos_y, pickup.x, pickup.y) < 0.7;
             if collected {
-                stats.apply_item(pickup.item.clone());
+                run.stats.apply_item(pickup.item.clone());
             }
             !collected
         });
 
-        let at_final_room = map.room_at(player.pos_x, player.pos_y) == Some(*map.room_cells.last().unwrap());
-        if stats.keys >= 3 && !escape_mode {
-            escape_mode = true;
-            level_timer = level_timer.min(30.0);
+        let at_final_room = run.map.room_at(run.player.pos_x, run.player.pos_y)
+            == Some(*run.map.room_cells.last().unwrap());
+        if run.stats.keys >= 3 && !run.escape_mode {
+            run.escape_mode = true;
+            run.level_timer = run.level_timer.min(30.0);
             global_message = "ESCAPE INMINENTE - SAL DE AHI".to_string();
             global_message_timer = 3.0;
         }
-        if escape_mode && at_final_room && transition_timer <= 0.0 {
+        if run.escape_mode && at_final_room && transition_timer <= 0.0 {
             transition_timer = 3.0;
         }
-        let player_room = map.room_at(player.pos_x, player.pos_y);
-        let room_enemies: Vec<Enemy> = enemies
+        let player_room = run.map.room_at(run.player.pos_x, run.player.pos_y);
+        let room_enemies: Vec<Enemy> = run
+            .enemies
             .iter()
             .filter(|enemy| {
-                enemy.is_mega || player_room
-                    .zip(map.room_at(enemy.x, enemy.y))
-                    .map(|(player_room, enemy_room)| map.rooms_are_open(player_room, enemy_room))
-                    .unwrap_or(false)
+                enemy.is_mega
+                    || player_room
+                        .zip(run.map.room_at(enemy.x, enemy.y))
+                        .map(|(player_room, enemy_room)| run.map.rooms_are_open(player_room, enemy_room))
+                        .unwrap_or(false)
             })
             .cloned()
             .collect();
-        radar.update(dt, player.pos_x, player.pos_y, player.angle, &room_enemies);
-        if game_mode == GameMode::Taylor && !radar.pings.is_empty() {
-            if let Some(track) = music.as_mut() {
-                if !track.is_stream_playing() {
-                    track.play_stream();
-                }
-            }
-        }
+        radar.update(dt, run.player.pos_x, run.player.pos_y, run.player.angle, &room_enemies);
         let fps = rl.get_fps();
 
         let mut d = rl.begin_drawing(&thread);
-        render_raycast(&mut d, &map, &player, &textures, SCREEN_W, SCREEN_H - ui::HUD_HEIGHT);
+        render_raycast(&mut d, &run.map, &run.player, &textures, SCREEN_W, SCREEN_H - ui::HUD_HEIGHT);
         render_visible_enemies(
             &mut d,
-            &map,
-            &player,
-            &enemies,
+            &run.map,
+            &run.player,
+            &run.enemies,
             &radar,
             game_mode,
             enemy_sprite_1.as_ref(),
             enemy_sprite_2.as_ref(),
             tailor_sprite.as_ref(),
+            muelto_sprite.as_ref(),
             SCREEN_W,
             SCREEN_H - ui::HUD_HEIGHT,
         );
         render_radar_reveals(&mut d, &radar, SCREEN_W, SCREEN_H - ui::HUD_HEIGHT);
-        render_minimap(&mut d, &map, &player, SCREEN_W);
+        render_minimap(&mut d, &run.map, &run.player, SCREEN_W);
         render_weapon_sprite(
             &mut d,
             weapon_sprites[weapon_index].0.as_ref(),
@@ -401,21 +508,74 @@ fn main() {
             &mut d,
             SCREEN_W,
             SCREEN_H,
-            &stats,
+            &run.stats,
             &current_weapon.name,
-            *stats.clip_ammo.get(&current_weapon.id).unwrap_or(&0),
-            *stats.reserve_ammo.get(&current_weapon.id).unwrap_or(&0),
+            *run.stats.clip_ammo.get(&current_weapon.id).unwrap_or(&0),
+            *run.stats.reserve_ammo.get(&current_weapon.id).unwrap_or(&0),
             &radar,
-            level_timer,
+            run.level_timer,
         );
         if hit_marker_timer > 0.0 {
             render_hit_marker(&mut d, &weapon, SCREEN_W, SCREEN_H);
         }
         d.draw_text(&format!("FPS: {}", fps), 12, 12, 20, Color::LIME);
-        d.draw_text(&format!("ESPACIO: {}/5", space_uses), 12, 36, 18, Color::WHITE);
+        d.draw_text(&format!("NIVEL: {}", run.level_number), 12, 36, 18, Color::WHITE);
+        d.draw_text(&format!("ESPACIO: {}/5", run.space_uses), 12, 58, 18, Color::WHITE);
         if global_message_timer > 0.0 {
             d.draw_text(&global_message, SCREEN_W / 2 - 90, 38, 20, Color::GOLD);
         }
+    }
+}
+
+fn new_run(
+    templates: &[level::RoomTemplate],
+    final_template: &level::RoomTemplate,
+    weapon_defs: &[WeaponDef],
+    item_defs: &[Item],
+    mode: GameMode,
+    level_number: u32,
+) -> RunState {
+    let grid_size = (3 + level_number).min(9) as usize;
+    let min_rooms = ((grid_size * grid_size) / 2).max(6);
+
+    let mut map = generate_level(templates, grid_size, grid_size, min_rooms, 75, random_range);
+    let final_room = *map.room_cells.last().unwrap();
+    map.replace_room(final_room, final_template);
+    let red_rooms = apply_red_rooms(&mut map, templates, final_room);
+
+    let spawn = map.room_cells.first().copied().unwrap_or((0, 0));
+    let player = Player::new(
+        spawn.0 as f32 * map.cell_w as f32 + map.cell_w as f32 / 2.0,
+        spawn.1 as f32 * map.cell_h as f32 + map.cell_h as f32 / 2.0,
+    );
+    let enemies = spawn_enemies(&map, mode);
+    let pickups = load_pickups(&map, final_room, item_defs);
+
+    let mut stats = PlayerStats::default();
+    for def in weapon_defs {
+        stats.clip_ammo.insert(def.id.clone(), def.clip_size);
+        stats.reserve_ammo.insert(def.id.clone(), def.reserve);
+    }
+
+    RunState {
+        level_number,
+        map,
+        player,
+        enemies,
+        pickups,
+        stats,
+        red_rooms,
+        cleared_rooms: HashSet::new(),
+        rewarded_red_rooms: HashSet::new(),
+        rewarded_enemies: HashSet::new(),
+        visited_rooms: HashSet::new(),
+        key_chance: 25,
+        rooms_since_key: 0,
+        level_timer: 90.0,
+        mega_stage: 0,
+        mega_id: None,
+        space_uses: 0,
+        escape_mode: false,
     }
 }
 
@@ -697,8 +857,7 @@ fn heal_cleared_rooms(
     }
 }
 
-fn load_pickups(map: &Level, final_room: (usize, usize)) -> Vec<ItemPickup> {
-    let items = Item::parse_from_file("assets/items/item.txt");
+fn load_pickups(map: &Level, final_room: (usize, usize), items: &[Item]) -> Vec<ItemPickup> {
     if items.is_empty() { return Vec::new(); }
     map.room_cells.iter().skip(1).enumerate().filter_map(|(index, &(cx, cy))| {
         if (cx, cy) == final_room { return None; }
@@ -804,6 +963,7 @@ fn render_visible_enemies(
     enemy_sprite_1: Option<&Texture2D>,
     enemy_sprite_2: Option<&Texture2D>,
     tailor_sprite: Option<&Texture2D>,
+    muelto_sprite: Option<&Texture2D>,
     width: i32,
     height: i32,
 ) {
@@ -816,36 +976,81 @@ fn render_visible_enemies(
         let distance = (dx * dx + dy * dy).sqrt();
         let relative = (dy.atan2(dx) - player.angle + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
         if relative.abs() > raycaster::FOV / 2.0 || distance < 0.1 { continue; }
-        let wall = cast_ray(map, player.pos_x, player.pos_y, dy.atan2(dx));
-        if wall.distance + 0.3 < distance { continue; }
+        if !map.rooms_are_open_at((player.pos_x, player.pos_y), (enemy.x, enemy.y)) {
+            continue;
+        }
+
+        // Parpadeo de VISIBILIDAD ligado al radar
         let blink_phase = (ping.alpha * 12.0).floor() as i32;
         if blink_phase % 2 != 0 { continue; }
+
         let screen_x = width / 2 + (relative / raycaster::FOV * width as f32) as i32;
         let size = (height as f32 / distance).clamp(8.0, 150.0) as i32;
         let body_y = height / 2 - size / 2;
-        let body_color = if enemy.is_mega {
-            Color::PURPLE
-        } else if enemy.is_alive() {
-            Color::RED
-        } else {
-            enemy.corpse_color
-        };
-        if mode == GameMode::Taylor {
-            if let Some(texture) = tailor_sprite {
-                let phase = (ping.alpha * if enemy.is_mega { 28.0 } else { 14.0 }).floor() as i32;
-                let scale = (size as f32 / texture.width as f32).max(0.1);
-                d.draw_texture_ex(texture, Vector2::new(screen_x as f32 - size as f32 / 2.0, body_y as f32), 0.0, scale, Color::WHITE);
-                if phase < 0 { continue; }
+
+        if !enemy.is_alive() {
+            let corpse_size = (size / 2).max(10) as f32;
+            let floor_y = (height / 2 + size / 2) as f32;
+
+            if mode == GameMode::Taylor {
+                if let Some(texture) = tailor_sprite {
+                    let dest = Rectangle::new(
+                        screen_x as f32,
+                        floor_y - corpse_size / 2.0,
+                        corpse_size * 1.6,
+                        corpse_size,
+                    );
+                    let src = Rectangle::new(0.0, 0.0, texture.width as f32, texture.height as f32);
+                    let origin = Vector2::new(dest.width / 2.0, dest.height / 2.0);
+                    d.draw_texture_pro(texture, src, dest, origin, 90.0, Color::WHITE);
+                    continue;
+                }
+            } else if let Some(texture) = muelto_sprite {
+                let scale = (corpse_size * 1.6 / texture.width as f32).max(0.05);
+                d.draw_texture_ex(
+                    texture,
+                    Vector2::new(screen_x as f32 - corpse_size * 0.8, floor_y - corpse_size / 2.0),
+                    0.0,
+                    scale,
+                    Color::WHITE,
+                );
+                continue;
             }
-        } else if let Some(texture) = if (ping.alpha * if enemy.is_mega { 28.0 } else { 14.0 }).floor() as i32 % 2 == 0 { enemy_sprite_1 } else { enemy_sprite_2 } {
-            let scale = (size as f32 / texture.width as f32).max(0.1);
-            d.draw_texture_ex(texture, Vector2::new(screen_x as f32 - size as f32 / 2.0, body_y as f32), 0.0, scale, Color::WHITE);
+            d.draw_rectangle(screen_x - size / 3, body_y, (size / 3).max(4), (size / 3).max(4), enemy.corpse_color);
             continue;
         }
-        let body_height = if enemy.is_alive() { size } else { (size / 3).max(4) };
-        d.draw_rectangle(screen_x - size / 3, body_y, (size / 3).max(4), body_height, body_color);
+
+        if mode == GameMode::Taylor {
+            if let Some(texture) = tailor_sprite {
+                let scale = (size as f32 / texture.width as f32).max(0.1);
+                d.draw_texture_ex(
+                    texture,
+                    Vector2::new(screen_x as f32 - size as f32 / 2.0, body_y as f32),
+                    0.0,
+                    scale,
+                    Color::WHITE,
+                );
+                continue;
+            }
+        } else {
+            let sprite_phase = (ping.alpha * if enemy.is_mega { 28.0 } else { 14.0 }).floor() as i32;
+            if let Some(texture) = if sprite_phase % 2 == 0 { enemy_sprite_1 } else { enemy_sprite_2 } {
+                let scale = (size as f32 / texture.width as f32).max(0.1);
+                d.draw_texture_ex(
+                    texture,
+                    Vector2::new(screen_x as f32 - size as f32 / 2.0, body_y as f32),
+                    0.0,
+                    scale,
+                    Color::WHITE,
+                );
+                continue;
+            }
+        }
+
+        let body_color = if enemy.is_mega { Color::PURPLE } else { Color::RED };
+        d.draw_rectangle(screen_x - size / 3, body_y, (size / 3).max(4), size, body_color);
         d.draw_circle(screen_x, body_y, (size / 3).max(4) as f32, body_color);
-        d.draw_rectangle_lines(screen_x - size / 3, body_y, (size / 3).max(4), body_height, Color::BLACK);
+        d.draw_rectangle_lines(screen_x - size / 3, body_y, (size / 3).max(4), size, Color::BLACK);
     }
 }
 
