@@ -1,4 +1,4 @@
-use raylib::prelude::Color;
+use raylib::prelude::{Color, Vector3};
 
 #[derive(Clone, Copy)]
 pub struct Material {
@@ -18,7 +18,6 @@ impl Material {
         Material { albedo, ambient: 0.15, diffuse: 0.85, specular: 0.0, shininess: 1.0 }
     }
 
-    /// Iluminación Phong con una sola luz (por ahora)
     pub fn shade(&self, normal: Vector3, light_dir: Vector3, view_dir: Vector3) -> Color {
         let n_dot_l = normal.dot(light_dir).max(0.0);
         let diffuse = self.diffuse * n_dot_l;
@@ -37,5 +36,3 @@ impl Material {
         )
     }
 }
-
-use raylib::prelude::Vector3;

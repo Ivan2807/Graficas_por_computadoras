@@ -1,15 +1,15 @@
 mod camera;
 mod framebuffer;
-mod ray_intersect;
 mod material;
-mod plane;
+mod ray_intersect;
+mod primitives;
 mod scene;
 
 use camera::Camera;
 use framebuffer::Framebuffer;
-use ray_intersect::Ray;
 use material::Material;
-use plane::Plane;
+use ray_intersect::Ray;
+use primitives::{Object, Plane, Cube, Sphere};
 use scene::Scene;
 use raylib::prelude::*;
 
@@ -17,15 +17,14 @@ const SCREEN_W: i32 = 800;
 const SCREEN_H: i32 = 600;
 const ROTATE_SPEED: f32 = 1.5;
 
-// Dimensiones del cuarto
-const ROOM_W: f32 = 12.0; // ancho (X)
-const ROOM_H: f32 = 6.0;  // alto  (Y)
-const ROOM_D: f32 = 20.0; // largo (Z)
+const ROOM_W: f32 = 12.0;
+const ROOM_H: f32 = 6.0;
+const ROOM_D: f32 = 20.0;
 
 fn main() {
     let (mut rl, thread) = raylib::init()
         .size(SCREEN_W, SCREEN_H)
-        .title("Raytracer - Auditorio (cuarto vacio)")
+        .title("Raytracer - Fase 1: Sistema unificado")
         .build();
     rl.set_target_fps(60);
 
@@ -36,54 +35,59 @@ fn main() {
     let floor_mat   = Material::diffuse(Color::new(60, 60, 70, 255));
     let wall_mat    = Material::diffuse(Color::new(95, 95, 105, 255));
     let ceiling_mat = Material::diffuse(Color::new(210, 210, 215, 255));
-    let stage_mat   = Material::new(Color::new(180, 140, 90, 255), 0.15, 0.75, 0.2, 32.0);
     let screen_mat  = Material::new(Color::new(40, 80, 160, 255), 0.15, 0.7, 0.25, 64.0);
 
     // ===== Cuarto (6 planos) =====
-    // Piso (y = 0), normal hacia arriba
-    let floor_idx = scene.add_plane(Plane::new(
+    scene.add(Object::Plane(Plane::new(
         Vector3::new(0.0, 0.0, 0.0),
         Vector3::new(0.0, 1.0, 0.0),
         floor_mat,
-    ));
+    )));
 
-    // Techo (y = ROOM_H), normal hacia abajo
-    scene.add_plane(Plane::new(
+    scene.add(Object::Plane(Plane::new(
         Vector3::new(0.0, ROOM_H, 0.0),
         Vector3::new(0.0, -1.0, 0.0),
         ceiling_mat,
-    ));
+    )));
 
-    // Pared izquierda (x = -ROOM_W/2), normal hacia +X
-    scene.add_plane(Plane::new(
+    scene.add(Object::Plane(Plane::new(
         Vector3::new(-ROOM_W / 2.0, 0.0, 0.0),
         Vector3::new(1.0, 0.0, 0.0),
         wall_mat,
-    ));
+    )));
 
-    // Pared derecha (x = +ROOM_W/2), normal hacia -X
-    scene.add_plane(Plane::new(
+    scene.add(Object::Plane(Plane::new(
         Vector3::new(ROOM_W / 2.0, 0.0, 0.0),
         Vector3::new(-1.0, 0.0, 0.0),
         wall_mat,
-    ));
+    )));
 
-    // Pared del fondo (z = -ROOM_D/2), normal hacia +Z (donde estara el escenario)
-    let back_wall_idx = scene.add_plane(Plane::new(
+    let back_wall_idx = scene.add(Object::Plane(Plane::new(
         Vector3::new(0.0, 0.0, -ROOM_D / 2.0),
         Vector3::new(0.0, 0.0, 1.0),
-        screen_mat, // por ahora esta pared es "el panel" que vas a pintar despues
-    ));
+        screen_mat,
+    )));
 
-    // Pared trasera (z = +ROOM_D/2), normal hacia -Z (donde esta el publico)
-    scene.add_plane(Plane::new(
+    scene.add(Object::Plane(Plane::new(
         Vector3::new(0.0, 0.0, ROOM_D / 2.0),
         Vector3::new(0.0, 0.0, -1.0),
         wall_mat,
-    ));
+    )));
+
+    // ===== Prueba de Fase 1: un cubo y una esfera dentro del cuarto =====
+    scene.add(Object::Cube(Cube::new(
+        Vector3::new(-2.0, 1.0, -4.0),
+        Vector3::new(2.0, 2.0, 2.0),
+        Material::diffuse(Color::new(220, 100, 50, 255)),
+    )));
+
+    scene.add(Object::Sphere(Sphere::new(
+        Vector3::new(2.0, 1.0, -4.0),
+        1.0,
+        Material::diffuse(Color::new(80, 200, 100, 255)),
+    )));
 
     // ===== Camara =====
-    // La ponemos cerca de la pared trasera, mirando hacia el escenario (-Z)
     let mut camera = Camera::new(Vector3::new(0.0, 2.5, ROOM_D / 2.0 - 1.0));
     let fov: f32 = 60.0_f32.to_radians();
     let light_dir = Vector3::new(0.3, 0.9, 0.3).normalized();
@@ -102,7 +106,6 @@ fn main() {
     while !rl.window_should_close() {
         let dt = rl.get_frame_time();
 
-        // Rotacion camara
         let mut delta_yaw = 0.0;
         let mut delta_pitch = 0.0;
         if rl.is_key_down(KeyboardKey::KEY_LEFT)  { delta_yaw   -= ROTATE_SPEED * dt; }
@@ -114,7 +117,6 @@ fn main() {
             needs_render = true;
         }
 
-        // Cambiar color del panel del fondo (la pared del escenario)
         if rl.is_key_pressed(KeyboardKey::KEY_ONE) {
             scene.update_material(back_wall_idx, panel_rojo);
             needs_render = true;
@@ -143,7 +145,7 @@ fn main() {
         d.draw_texture(&texture, 0, 0, Color::WHITE);
         d.draw_fps(10, 10);
         d.draw_text("Flechas = rotar camara", 10, SCREEN_H - 45, 16, Color::WHITE);
-        d.draw_text("1=rojo 2=azul 3=verde 4=brillante (panel del fondo)", 10, SCREEN_H - 25, 16, Color::WHITE);
+        d.draw_text("1/2/3/4 = color del panel del fondo", 10, SCREEN_H - 25, 16, Color::WHITE);
     }
 }
 
@@ -164,11 +166,11 @@ fn render(fb: &mut Framebuffer, scene: &Scene, camera: &Camera, fov: f32, light_
             let ray = Ray::new(camera.eye, direction);
 
             let color = match scene.closest_hit(&ray) {
-                Some((index, hit)) => {
+                Some((idx, hit)) => {
                     let view_dir = (camera.eye - hit.point).normalized();
-                    scene.planes[index].material.shade(hit.normal, light_dir, view_dir)
+                    scene.objects[idx].material().shade(hit.normal, light_dir, view_dir)
                 }
-                None => Color::new(15, 15, 20, 255), // "exterior" (por si algo falla)
+                None => Color::new(15, 15, 20, 255),
             };
 
             fb.set_pixel(x, y, color);
