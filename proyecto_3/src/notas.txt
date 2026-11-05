@@ -1,0 +1,7 @@
+- que los planetas se hagan mas grande cuando uno se acerque
+- hacerlo mas bonito
+- que la nave este centrada
+- sonido solo de la nave
+- texturas
+- que deje de renderizar los otros planetas cuando se acerque a uno
+- investigar sobre de ksp de los planetas y como simular la parte de afuera y sus dimensiones
