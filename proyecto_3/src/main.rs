@@ -14,7 +14,7 @@ const SCREEN_HEIGHT: i32 = 768;
 fn main() {
     let (mut rl, thread) = raylib::init()
         .size(SCREEN_WIDTH, SCREEN_HEIGHT)
-        .title("KSP 3D Software Renderer - Skybox Procedural & Culling")
+        .title("KSP 3D Engine - Inercia Realista y Vía Láctea")
         .build();
 
     rl.set_target_fps(60);
@@ -27,6 +27,11 @@ fn main() {
     let mut cam_yaw: f32 = 0.0;
     let mut cam_pitch: f32 = 0.0;
 
+    let mut velocity = (0.0, 0.0, 0.0);
+    let acceleration_power = 65.0;
+
+    let mut real_scale_mode = false;
+
     let mut render_texture = rl.load_render_texture(
         &thread,
         SCREEN_WIDTH as u32,
@@ -35,11 +40,11 @@ fn main() {
 
     while !rl.window_should_close() {
         let dt = rl.get_frame_time();
-
-        let move_speed = 45.0 * dt;
         let rot_speed = 1.5 * dt;
 
-        // Controles de vuelo FPS
+        if rl.is_key_pressed(KeyboardKey::KEY_ONE) { real_scale_mode = false; }
+        if rl.is_key_pressed(KeyboardKey::KEY_TWO) { real_scale_mode = true; }
+
         if rl.is_key_down(KeyboardKey::KEY_LEFT) { cam_yaw -= rot_speed; }
         if rl.is_key_down(KeyboardKey::KEY_RIGHT) { cam_yaw += rot_speed; }
         if rl.is_key_down(KeyboardKey::KEY_UP) { cam_pitch += rot_speed; }
@@ -57,31 +62,94 @@ fn main() {
         let right_x = cos_y;
         let right_z = -sin_y;
 
+        let mut accel_x = 0.0;
+        let mut accel_y = 0.0;
+        let mut accel_z = 0.0;
+
         if rl.is_key_down(KeyboardKey::KEY_W) {
-            cam_pos.0 += forward_x * move_speed;
-            cam_pos.2 += forward_z * move_speed;
+            accel_x += forward_x;
+            accel_z += forward_z;
         }
         if rl.is_key_down(KeyboardKey::KEY_S) {
-            cam_pos.0 -= forward_x * move_speed;
-            cam_pos.2 -= forward_z * move_speed;
+            accel_x -= forward_x;
+            accel_z -= forward_z;
         }
         if rl.is_key_down(KeyboardKey::KEY_A) {
-            cam_pos.0 -= right_x * move_speed;
-            cam_pos.2 -= right_z * move_speed;
+            accel_x -= right_x;
+            accel_z -= right_z;
         }
         if rl.is_key_down(KeyboardKey::KEY_D) {
-            cam_pos.0 += right_x * move_speed;
-            cam_pos.2 += right_z * move_speed;
+            accel_x += right_x;
+            accel_z += right_z;
         }
-        if rl.is_key_down(KeyboardKey::KEY_Q) { cam_pos.1 += move_speed; }
-        if rl.is_key_down(KeyboardKey::KEY_E) { cam_pos.1 -= move_speed; }
+        if rl.is_key_down(KeyboardKey::KEY_Q) { accel_y += 1.0; }
+        if rl.is_key_down(KeyboardKey::KEY_E) { accel_y -= 1.0; }
 
-        solar_system.update(dt);
+        let mut current_accel_power = acceleration_power;
+        if rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT) || rl.is_key_down(KeyboardKey::KEY_RIGHT_SHIFT) {
+            let turbo_multiplier = if real_scale_mode { 8.0 } else { 3.0 };
+            current_accel_power *= turbo_multiplier;
+        }
 
-        // --- PIPELINE DE RENDERIZADO ---
+        velocity.0 += accel_x * current_accel_power * dt;
+        velocity.1 += accel_y * current_accel_power * dt;
+        velocity.2 += accel_z * current_accel_power * dt;
+
+        // Fricción dinámica: Modo 2 se desliza muchísimo más (inercia espacial real), Modo 1 frena normal
+        let current_friction = if real_scale_mode { 0.35 } else { 2.0 };
+
+        velocity.0 -= velocity.0 * current_friction * dt;
+        velocity.1 -= velocity.1 * current_friction * dt;
+        velocity.2 -= velocity.2 * current_friction * dt;
+
+        let mut next_pos = (
+            cam_pos.0 + velocity.0 * dt,
+            cam_pos.1 + velocity.1 * dt,
+            cam_pos.2 + velocity.2 * dt,
+        );
+
+        let (dist_mult, rad_mult, sun_radius, sun_z) = if real_scale_mode {
+            (5.0, 4.0, 80.0, 1200.0)
+        } else {
+            (1.0, 1.0, 30.0, 300.0)
+        };
+
+        let sun_pos = (0.0, 0.0, sun_z);
+
+        // --- COLISIÓN CON EL SOL ---
+        let dist_sun = ((next_pos.0 - sun_pos.0).powi(2) + (next_pos.1 - sun_pos.1).powi(2) + (next_pos.2 - sun_pos.2).powi(2)).sqrt();
+        if dist_sun < (sun_radius + 12.0) {
+            velocity.0 = 0.0;
+            velocity.1 = 0.0;
+            velocity.2 = 0.0;
+            next_pos = cam_pos;
+        }
+
+        // --- COLISIÓN CON LOS PLANETAS ---
+        for p in &solar_system.planets {
+            let actual_dist = p.distance * dist_mult;
+            let actual_rad = p.radius * rad_mult;
+
+            let px = actual_dist * p.angle.cos();
+            let pz = sun_pos.2 + actual_dist * p.angle.sin();
+            let dist_planet = ((next_pos.0 - px).powi(2) + (next_pos.1 - 0.0).powi(2) + (next_pos.2 - pz).powi(2)).sqrt();
+            
+            if dist_planet < actual_rad + 5.0 {
+                velocity.0 = 0.0;
+                velocity.1 = 0.0;
+                velocity.2 = 0.0;
+                next_pos = cam_pos;
+                break;
+            }
+        }
+
+        cam_pos = next_pos;
+        
+        solar_system.update(dt, real_scale_mode);
+
+        // --- RENDER ---
         fb.clear();
 
-        // 1. Renderizar Sistema Solar y Esfera Celeste Procedural (Estrellas y Nebulosas)
         let active_planet = solar_system.render(
             &mut fb, 
             cam_pos, 
@@ -90,13 +158,12 @@ fn main() {
             cos_y, 
             sin_y, 
             cos_x, 
-            sin_x
+            sin_x,
+            real_scale_mode
         );
 
-        // 2. Renderizar nave fija en pantalla con iluminación solar proyectada
         ship.render(&mut fb, cam_pos, cam_yaw, cam_pitch);
 
-        // --- TRANSFERIR FRAMEBUFFER A RAYLIB ---
         let mut d = rl.begin_drawing(&thread);
         {
             let mut texture_drawer = d.begin_texture_mode(&thread, &mut render_texture);
@@ -119,14 +186,18 @@ fn main() {
             Color::WHITE,
         );
 
-        // HUD / Interfaz
-        d.draw_text("KSP 3D ENGINE - SKYBOX PROCEDURAL", 20, 20, 18, Color::GREEN);
-        d.draw_text("Controles: W, A, S, D (Mover) | Flechas (Girar cámara)", 20, 45, 14, Color::LIGHTGRAY);
+        // HUD
+        d.draw_text("3D ENGINE", 20, 20, 18, Color::GREEN);
+        d.draw_text("Presiona 1: Modo Arcade | Presiona 2: Espacio Profundo Real", 20, 45, 14, Color::LIGHTGRAY);
         
-        if let Some(name) = active_planet {
-            d.draw_text(&format!("OBJETIVO AISLADO EN RANGO: {}", name), 20, 70, 16, Color::YELLOW);
+        if real_scale_mode {
+            d.draw_text("MODO ACTIVO: 2 - ESPACIO PROFUNDO ", 20, 70, 15, Color::ORANGE);
         } else {
-            d.draw_text("SISTEMA ESTELAR KERBOL - NAVEGACIÓN LIBRE", 20, 70, 14, Color::SKYBLUE);
+            d.draw_text("MODO ACTIVO: 1 - MODO ARCADE", 20, 70, 14, Color::SKYBLUE);
+        }
+
+        if let Some(name) = active_planet {
+            d.draw_text(&format!("OBJETIVO AISLADO EN RANGO: {}", name), 20, 95, 16, Color::YELLOW);
         }
     }
 }
