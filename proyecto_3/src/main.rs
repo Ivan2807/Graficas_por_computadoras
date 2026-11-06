@@ -14,7 +14,7 @@ const SCREEN_HEIGHT: i32 = 768;
 fn main() {
     let (mut rl, thread) = raylib::init()
         .size(SCREEN_WIDTH, SCREEN_HEIGHT)
-        .title("KSP 3D Engine - Inercia Realista y Vía Láctea")
+        .title("KSP 3D Engine - Escala Masiva & Inercia Espacial")
         .build();
 
     rl.set_target_fps(60);
@@ -95,8 +95,8 @@ fn main() {
         velocity.1 += accel_y * current_accel_power * dt;
         velocity.2 += accel_z * current_accel_power * dt;
 
-        // Fricción dinámica: Modo 2 se desliza muchísimo más (inercia espacial real), Modo 1 frena normal
-        let current_friction = if real_scale_mode { 0.35 } else { 2.0 };
+        // Fricción baja (0.3) en Modo 2 para sentir el deslizamiento espacial inercial
+        let current_friction = if real_scale_mode { 0.3 } else { 2.0 };
 
         velocity.0 -= velocity.0 * current_friction * dt;
         velocity.1 -= velocity.1 * current_friction * dt;
@@ -108,8 +108,9 @@ fn main() {
             cam_pos.2 + velocity.2 * dt,
         );
 
+        // Sincronizado exactamente con el nuevo sol colosal y distancias del Modo 2
         let (dist_mult, rad_mult, sun_radius, sun_z) = if real_scale_mode {
-            (5.0, 4.0, 80.0, 1200.0)
+            (5.2, 4.0, 120.0, 1500.0)
         } else {
             (1.0, 1.0, 30.0, 300.0)
         };
@@ -118,7 +119,7 @@ fn main() {
 
         // --- COLISIÓN CON EL SOL ---
         let dist_sun = ((next_pos.0 - sun_pos.0).powi(2) + (next_pos.1 - sun_pos.1).powi(2) + (next_pos.2 - sun_pos.2).powi(2)).sqrt();
-        if dist_sun < (sun_radius + 12.0) {
+        if dist_sun < (sun_radius + 15.0) {
             velocity.0 = 0.0;
             velocity.1 = 0.0;
             velocity.2 = 0.0;
@@ -187,11 +188,11 @@ fn main() {
         );
 
         // HUD
-        d.draw_text("3D ENGINE", 20, 20, 18, Color::GREEN);
-        d.draw_text("Presiona 1: Modo Arcade | Presiona 2: Espacio Profundo Real", 20, 45, 14, Color::LIGHTGRAY);
+        d.draw_text("KSP 3D ENGINE - ESCALA MASIVA & INERCIA ESPACIAL", 20, 20, 18, Color::GREEN);
+        d.draw_text("Presiona 1: Modo Arcade | Presiona 2: Espacio Profundo Masivo", 20, 45, 14, Color::LIGHTGRAY);
         
         if real_scale_mode {
-            d.draw_text("MODO ACTIVO: 2 - ESPACIO PROFUNDO ", 20, 70, 15, Color::ORANGE);
+            d.draw_text("MODO ACTIVO: 2 - ESPACIO PROFUNDO (Escala épica & deslizamiento)", 20, 70, 15, Color::ORANGE);
         } else {
             d.draw_text("MODO ACTIVO: 1 - MODO ARCADE", 20, 70, 14, Color::SKYBLUE);
         }

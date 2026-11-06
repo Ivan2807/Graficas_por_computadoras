@@ -93,7 +93,7 @@ impl SolarSystem {
     }
 
     pub fn update(&mut self, dt: f32, real_scale_mode: bool) {
-        let speed_multiplier = if !real_scale_mode { 1.4 } else { 0.15 };
+        let speed_multiplier = if !real_scale_mode { 1.4 } else { 0.12 }; // Órbita ultralenta y majestuosa en Modo 2
 
         for p in &mut self.planets {
             p.angle += p.speed * dt * 0.3 * speed_multiplier;
@@ -116,17 +116,19 @@ impl SolarSystem {
         sin_x: f32,
         real_scale_mode: bool
     ) -> Option<&'static str> {
-        let fov = 500.0;
+        // FOV dinámico ligeramente más amplio en Modo 2 para enfatizar la inmensidad del vacío
+        let fov = if real_scale_mode { 540.0 } else { 500.0 };
         let cx = (fb.width / 2) as f32;
         let cy = (fb.height / 2) as f32;
 
+        // Modo 2: Sol colosal (120. de radio, 1500. de distancia Z) para empequeñecer a la nave
         let (dist_mult, rad_mult, sun_radius, sun_z) = if real_scale_mode {
-            (5.0, 4.0, 80.0, 1200.0) 
+            (5.2, 4.0, 120.0, 1500.0) 
         } else {
             (1.0, 1.0, 30.0, 300.0)  
         };
 
-        // --- SKYBOX REALISTA: VÍA LÁCTEA FOTOGRÁFICA Y ESTRELLAS SUAVES ---
+        // --- SKYBOX: VÍA LÁCTEA FOTOGRÁFICA Y ESTRELLAS ---
         for y in 0..fb.height {
             for x in 0..fb.width {
                 let fx = (x as f32 - cx) / fov;
@@ -146,20 +148,15 @@ impl SolarSystem {
                 let world_y = y1;
                 let world_z = x1 * sin_y + z1 * cos_y;
 
-                // Curva y arco de la Vía Láctea imitando la foto real (banda diagonal con nubes de polvo oscuro)
                 let arch_factor = world_y + (world_x * 0.25).sin() * 0.4;
                 let galactic_band = (-arch_factor * arch_factor * 5.0).exp();
-                
-                // Simulación de los carriles oscuros de polvo estelar (absorción de luz típica de la galaxia)
                 let dust_lane = ((world_x * 8.0).cos() * (world_z * 8.0).sin()).abs();
                 let core_brightness = galactic_band * (1.0 - dust_lane * 0.6);
 
-                // Tonos base nocturnos profundos con el brillo polvoriento de la Vía Láctea
-                let mut r = 2.0 + core_brightness * 45.0 + dust_lane * 10.0;
-                let mut g = 2.0 + core_brightness * 42.0 + dust_lane * 8.0;
-                let mut b = 4.0 + core_brightness * 55.0 + dust_lane * 15.0;
+                let mut r = 1.5 + core_brightness * 45.0 + dust_lane * 10.0;
+                let mut g = 1.5 + core_brightness * 42.0 + dust_lane * 8.0;
+                let mut b = 3.0 + core_brightness * 55.0 + dust_lane * 15.0;
 
-                // Estrellas de fondo suaves (manteniendo el brillo original intacto)
                 let p_val = (world_x * 129.898 + world_y * 78.233 + world_z * 37.719).sin() * 43758.5453;
                 let random_fract = p_val - p_val.floor();
                 if random_fract > 0.982 {
@@ -260,7 +257,7 @@ impl SolarSystem {
             (x2, y2, z2)
         };
 
-        // --- SOL ---
+        // --- SOL COLOSAL ---
         let rel_sun_x = sun_pos.0 - cam_pos.0;
         let rel_sun_y = sun_pos.1 - cam_pos.1;
         let rel_sun_z = sun_pos.2 - cam_pos.2;
@@ -276,7 +273,7 @@ impl SolarSystem {
             let sun_sx = (sun_cam_x * fov / sun_cam_z + cx) as i32;
             let sun_sy = (sun_cam_y * fov / sun_cam_z + cy) as i32;
 
-            let glow_radius = sun_radius * 3.0; 
+            let glow_radius = sun_radius * 3.5; 
             let min_x = (sun_sx as f32 - glow_radius) as i32;
             let max_x = (sun_sx as f32 + glow_radius) as i32;
             let min_y = (sun_sy as f32 - glow_radius) as i32;
@@ -294,9 +291,9 @@ impl SolarSystem {
                             let idx = (y as usize) * fb.width + (x as usize);
                             let current = fb.color_buffer[idx];
 
-                            let r = (current.r as f32 + (255.0 * 0.8 * factor)).min(255.0) as u8;
-                            let g = (current.g as f32 + (230.0 * 0.75 * factor)).min(255.0) as u8;
-                            let b = (current.b as f32 + (150.0 * 0.6 * factor)).min(255.0) as u8;
+                            let r = (current.r as f32 + (255.0 * 0.85 * factor)).min(255.0) as u8;
+                            let g = (current.g as f32 + (235.0 * 0.8 * factor)).min(255.0) as u8;
+                            let b = (current.b as f32 + (160.0 * 0.65 * factor)).min(255.0) as u8;
 
                             fb.color_buffer[idx] = Pixel { r, g, b, a: 255 };
                         }
