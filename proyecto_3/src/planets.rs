@@ -31,6 +31,7 @@ pub struct Planet {
 pub struct SolarSystem {
     pub planets: Vec<Planet>,
     pub sun_mesh: Mesh,
+    stars: Vec<(f32, f32, f32, Pixel)>,
 }
 
 impl SolarSystem {
@@ -38,9 +39,51 @@ impl SolarSystem {
         let sun_mesh = Mesh::sphere(16, 16, 1.0);
         let planet_mesh = Mesh::sphere(12, 12, 1.0);
         let moon_mesh = Mesh::sphere(8, 8, 1.0);
+        let star_count = 72000;
+        let random = |seed: usize, salt: f32| {
+            let value = (seed as f32 * 12.9898 + salt * 78.233).sin() * 43_758.547;
+            value - value.floor()
+        };
+        let cloud_cells = 96;
+        let stars = (0..star_count).map(|i| {
+            let longitude = random(i, 9.0) * std::f32::consts::TAU;
+            let cell_position = longitude / std::f32::consts::TAU * cloud_cells as f32;
+            let cell = cell_position.floor() as usize % cloud_cells;
+            let next_cell = (cell + 1) % cloud_cells;
+            let blend = cell_position.fract();
+            let cell_noise = |index: usize, salt: f32| random(index, salt) * 2.0 - 1.0;
+            let offset = cell_noise(cell, 21.0) * (1.0 - blend)
+                + cell_noise(next_cell, 21.0) * blend;
+            let local_width = 0.035 + (random(cell, 22.0) * (1.0 - blend)
+                + random(next_cell, 22.0) * blend) * 0.16;
+            let center_line = (longitude * 1.35 + (longitude * 3.1).sin() * 0.24).sin() * 0.15
+                + (longitude * 3.7 + 1.2).sin() * 0.065
+                + (longitude * 8.3).sin() * 0.022
+                + offset * 0.13;
+            let y = if i % 10 < 2 {
+                center_line + (random(i, 10.0) - 0.5 + random(i, 11.0) - 0.5) * local_width * 1.7
+            } else if i % 10 < 4 {
+                center_line + (random(i, 12.0) - 0.5 + random(i, 15.0) - 0.5) * (0.8 + local_width)
+            } else {
+                random(i, 13.0) * 2.0 - 1.0
+            }.clamp(-0.98, 0.98);
+            let ring = (1.0 - y * y).sqrt();
+            let (x, z) = (ring * longitude.cos(), ring * longitude.sin());
+            let pulse = match i % 8 { 0 | 1 => 1.7, 2 | 3 => 1.3, 4 | 5 => 0.9, _ => 0.58 };
+            let variation = (((i * 73 % 121) as f32 + 70.0) * pulse).clamp(35.0, 255.0) as u8;
+            let color = match i % 31 {
+                0 => Pixel { r: 145, g: 190, b: 255, a: 255 },
+                1 => Pixel { r: 255, g: 220, b: 180, a: 255 },
+                _ => Pixel { r: variation.saturating_sub(12), g: variation, b: variation.saturating_add(24), a: 255 },
+            };
+            (x, y, z, color)
+        }).collect();
+
+
 
         Self {
             sun_mesh,
+            stars,
             planets: vec![
                 Planet { 
                     name: "Moho", distance: 90.0, speed: 1.2, radius: 4.0, 
@@ -117,13 +160,14 @@ impl SolarSystem {
         real_scale_mode: bool
     ) -> Option<&'static str> {
         // FOV dinámico ligeramente más amplio en Modo 2 para enfatizar la inmensidad del vacío
-        let fov = if real_scale_mode { 540.0 } else { 500.0 };
+        // Debe coincidir con el FOV del rasterizador de Framebuffer para alinear planetas y halos.
+        let fov = 500.0;
         let cx = (fb.width / 2) as f32;
         let cy = (fb.height / 2) as f32;
 
         // Modo 2: Sol colosal (120. de radio, 1500. de distancia Z) para empequeñecer a la nave
         let (dist_mult, rad_mult, sun_radius, sun_z) = if real_scale_mode {
-            (5.2, 4.0, 120.0, 1500.0) 
+            (14.0, 3.0, 120.0, 2200.0) 
         } else {
             (1.0, 1.0, 30.0, 300.0)  
         };
@@ -148,24 +192,22 @@ impl SolarSystem {
                 let world_y = y1;
                 let world_z = x1 * sin_y + z1 * cos_y;
 
-                let arch_factor = world_y + (world_x * 0.25).sin() * 0.4;
-                let galactic_band = (-arch_factor * arch_factor * 5.0).exp();
-                let dust_lane = ((world_x * 8.0).cos() * (world_z * 8.0).sin()).abs();
-                let core_brightness = galactic_band * (1.0 - dust_lane * 0.6);
+                let arch_factor = world_y + (world_x * 0.22).sin() * 0.34;
+                let galactic_band = (-arch_factor * arch_factor * 3.8).exp();
+                let cloud_a = (world_x * 13.0 + (world_z * 8.0).sin() * 2.2).sin()
+                    * (world_y * 17.0 + world_z * 5.0).cos();
+                let cloud_b = (world_x * 31.0 - world_z * 23.0 + (world_y * 19.0).sin()).sin()
+                    * (world_z * 27.0 + world_y * 11.0).cos();
+                let cloud = (0.72 + cloud_a * 0.19 + cloud_b * 0.09).clamp(0.35, 1.25);
+                let dust_lane = ((world_x * 18.0 + (world_z * 12.0).sin() * 2.0).sin()
+                    * (world_z * 9.0 - world_y * 14.0).cos()).abs();
+                let nebula = galactic_band * cloud * (1.0 - (1.0 - dust_lane) * 0.48);
 
-                let mut r = 1.5 + core_brightness * 45.0 + dust_lane * 10.0;
-                let mut g = 1.5 + core_brightness * 42.0 + dust_lane * 8.0;
-                let mut b = 3.0 + core_brightness * 55.0 + dust_lane * 15.0;
+                let r = 1.0 + nebula * 20.0 + galactic_band * cloud_a.max(0.0) * 5.0;
+                let g = 1.5 + nebula * 50.0 + galactic_band * cloud_b.max(0.0) * 12.0;
+                let b = 4.0 + nebula * 105.0 + galactic_band * cloud_a.max(0.0) * 24.0;
 
-                let p_val = (world_x * 129.898 + world_y * 78.233 + world_z * 37.719).sin() * 43758.5453;
-                let random_fract = p_val - p_val.floor();
-                if random_fract > 0.982 {
-                    let star_intensity = (random_fract - 0.982) / (1.0 - 0.982);
-                    r += star_intensity * 75.0;
-                    g += star_intensity * 75.0;
-                    b += star_intensity * 90.0;
-                }
-
+                // Estrellas dispersas por celdas angulares para evitar el ruido por píxel.
                 let idx = y * fb.width + x;
                 fb.color_buffer[idx] = Pixel {
                     r: r.clamp(0.0, 255.0) as u8,
@@ -174,6 +216,46 @@ impl SolarSystem {
                     a: 255,
                 };
                 fb.depth_buffer[idx] = f32::MAX;
+            }
+        }
+
+        if real_scale_mode {
+            for (i, (star_x, star_y, star_z, color)) in self.stars.iter().enumerate() {
+                let parallax = match i % 10 { 0 => 0.000035, 1..=2 => 0.000012, _ => 0.000002 };
+                let world_x = star_x - cam_pos.0 * parallax;
+                let world_y = star_y - cam_pos.1 * parallax;
+                let world_z = star_z - (cam_pos.2 + 40.0) * parallax;
+                let length = (world_x * world_x + world_y * world_y + world_z * world_z).sqrt();
+                let world_x = world_x / length;
+                let world_y = world_y / length;
+                let world_z = world_z / length;
+                let view_x = world_x * cos_y + world_z * sin_y;
+                let yaw_z = -world_x * sin_y + world_z * cos_y;
+                let view_y = world_y * cos_x - yaw_z * sin_x;
+                let view_z = world_y * sin_x + yaw_z * cos_x;
+                if view_z <= 0.1 { continue; }
+
+                let sx = (view_x * fov / view_z + cx) as i32;
+                let sy = (view_y * fov / view_z + cy) as i32;
+                if sx >= 0 && sx < fb.width as i32 && sy >= 0 && sy < fb.height as i32 {
+                    let idx = sy as usize * fb.width + sx as usize;
+                    fb.color_buffer[idx] = *color;
+                    // El núcleo queda definido y el halo redondo evita que las estrellas parezcan bloques.
+                    if i % 2 == 0 {
+                        let halo = Pixel { r: color.r / 3, g: color.g / 3, b: color.b / 3, a: 255 };
+                        let faint = Pixel { r: color.r / 8, g: color.g / 8, b: color.b / 8, a: 255 };
+                        for (dx, dy, tint) in [
+                            (-1, 0, halo), (1, 0, halo), (0, -1, halo), (0, 1, halo),
+                            (-1, -1, faint), (1, -1, faint), (-1, 1, faint), (1, 1, faint),
+                        ] {
+                            let hx = sx + dx;
+                            let hy = sy + dy;
+                            if hx >= 0 && hx < fb.width as i32 && hy >= 0 && hy < fb.height as i32 {
+                                fb.color_buffer[hy as usize * fb.width + hx as usize] = tint;
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -324,6 +406,40 @@ impl SolarSystem {
             if let Some(active_idx) = active_planet_idx {
                 if active_idx != i { continue; }
                 else { targeted_name = Some(p.name); }
+            }
+
+            // Aura atmosférica suave para separar visualmente cada planeta del fondo.
+            let center_cam = transform((0.0, 0.0, 0.0), p_pos, 1.0, 0.0);
+            if center_cam.2 > 0.5 {
+                let screen_x = center_cam.0 * fov / center_cam.2 + cx;
+                let screen_y = center_cam.1 * fov / center_cam.2 + cy;
+                let apparent_radius = (actual_rad * fov / center_cam.2).clamp(1.0, 100.0);
+                let inner_radius = apparent_radius * 0.8;
+                let outer_radius = (apparent_radius * 1.65 + 2.0).min(130.0);
+                let min_x = (screen_x - outer_radius).floor().max(0.0) as usize;
+                let max_x = (screen_x + outer_radius).ceil().min((fb.width - 1) as f32) as usize;
+                let min_y = (screen_y - outer_radius).floor().max(0.0) as usize;
+                let max_y = (screen_y + outer_radius).ceil().min((fb.height - 1) as f32) as usize;
+
+                for y in min_y..=max_y {
+                    for x in min_x..=max_x {
+                        let dx = x as f32 + 0.5 - screen_x;
+                        let dy = y as f32 + 0.5 - screen_y;
+                        let distance = (dx * dx + dy * dy).sqrt();
+                        if distance <= inner_radius || distance >= outer_radius { continue; }
+
+                        let idx = y * fb.width + x;
+                        if fb.depth_buffer[idx] < center_cam.2 - actual_rad { continue; }
+                        let fade = (1.0 - (distance - inner_radius) / (outer_radius - inner_radius)).powi(2) * 0.28;
+                        let current = fb.color_buffer[idx];
+                        fb.color_buffer[idx] = Pixel {
+                            r: (current.r as f32 + p.color.r as f32 * fade).min(255.0) as u8,
+                            g: (current.g as f32 + p.color.g as f32 * fade).min(255.0) as u8,
+                            b: (current.b as f32 + p.color.b as f32 * fade).min(255.0) as u8,
+                            a: 255,
+                        };
+                    }
+                }
             }
 
             if p.is_gas_giant {

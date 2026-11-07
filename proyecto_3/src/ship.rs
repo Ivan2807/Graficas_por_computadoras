@@ -98,7 +98,7 @@ impl Ship {
     }
 
     // Renderiza la nave FIJA Y CENTRADA en pantalla con iluminación proyectada desde el Sol
-    pub fn render(&self, fb: &mut Framebuffer, cam_pos: (f32, f32, f32), yaw: f32, pitch: f32) {
+    pub fn render(&self, fb: &mut Framebuffer, cam_pos: (f32, f32, f32), yaw: f32, pitch: f32, scale: f32) {
         let ship_color = Pixel { r: 195, g: 205, b: 220, a: 255 };
         let sun_pos = (0.0, 0.0, 200.0);
 
@@ -152,9 +152,9 @@ impl Ship {
             let dot = (world_nx * lnx + world_ny * lny + world_nz * lnz).max(0.15);
 
             // 5. Posición FIJA frente a la cámara (centrada en pantalla)
-            let p0 = (v0.x, v0.y, v0.z + 3.0);
-            let p1 = (v1.x, v1.y, v1.z + 3.0);
-            let p2 = (v2.x, v2.y, v2.z + 3.0);
+            let p0 = (v0.x * scale, v0.y * scale, v0.z * scale + 3.0);
+            let p1 = (v1.x * scale, v1.y * scale, v1.z * scale + 3.0);
+            let p2 = (v2.x * scale, v2.y * scale, v2.z * scale + 3.0);
 
             fb.draw_triangle(p0, p1, p2, ship_color, dot);
         }

@@ -5,6 +5,7 @@ mod planets;
 
 use raylib::prelude::*;
 use framebuffer::Framebuffer;
+use raylib::core::texture::RaylibTexture2D;
 use planets::SolarSystem;
 use ship::Ship;
 
@@ -35,8 +36,9 @@ fn main() {
     let mut render_texture = rl.load_render_texture(
         &thread,
         SCREEN_WIDTH as u32,
-        SCREEN_HEIGHT as u32
+        SCREEN_HEIGHT as u32,
     ).expect("Error al crear la textura de renderizado");
+    let mut rgba_buffer = Vec::with_capacity((SCREEN_WIDTH * SCREEN_HEIGHT * 4) as usize);
 
     while !rl.window_should_close() {
         let dt = rl.get_frame_time();
@@ -110,7 +112,7 @@ fn main() {
 
         // Sincronizado exactamente con el nuevo sol colosal y distancias del Modo 2
         let (dist_mult, rad_mult, sun_radius, sun_z) = if real_scale_mode {
-            (5.2, 4.0, 120.0, 1500.0)
+            (14.0, 3.0, 120.0, 2200.0)
         } else {
             (1.0, 1.0, 30.0, 300.0)
         };
@@ -163,21 +165,15 @@ fn main() {
             real_scale_mode
         );
 
-        ship.render(&mut fb, cam_pos, cam_yaw, cam_pitch);
+        let ship_scale = if real_scale_mode { 0.62 } else { 1.0 };
+        ship.render(&mut fb, cam_pos, cam_yaw, cam_pitch, ship_scale);
 
         let mut d = rl.begin_drawing(&thread);
-        {
-            let mut texture_drawer = d.begin_texture_mode(&thread, &mut render_texture);
-            texture_drawer.clear_background(Color::BLACK);
-
-            for y in 0..SCREEN_HEIGHT {
-                for x in 0..SCREEN_WIDTH {
-                    let idx = (y as usize) * (SCREEN_WIDTH as usize) + (x as usize);
-                    let p = fb.color_buffer[idx];
-                    texture_drawer.draw_pixel(x, y, Color::new(p.r, p.g, p.b, p.a));
-                }
-            }
+        rgba_buffer.clear();
+        for p in &fb.color_buffer {
+            rgba_buffer.extend_from_slice(&[p.r, p.g, p.b, p.a]);
         }
+        render_texture.update_texture(&rgba_buffer).expect("Error al actualizar la textura de pantalla");
 
         d.clear_background(Color::BLACK);
         d.draw_texture_rec(
@@ -192,13 +188,17 @@ fn main() {
         d.draw_text("Presiona 1: Modo Arcade | Presiona 2: Espacio Profundo Masivo", 20, 45, 14, Color::LIGHTGRAY);
         
         if real_scale_mode {
-            d.draw_text("MODO ACTIVO: 2 - ESPACIO PROFUNDO (Escala épica & deslizamiento)", 20, 70, 15, Color::ORANGE);
+            d.draw_text("MODO ACTIVO: 2 - ESPACIO PROFUNDO ", 20, 70, 15, Color::ORANGE);
+            let speed = (velocity.0 * velocity.0 + velocity.1 * velocity.1 + velocity.2 * velocity.2).sqrt();
+            let sun_distance = (cam_pos.0 * cam_pos.0 + cam_pos.1 * cam_pos.1 + (sun_z - cam_pos.2).powi(2)).sqrt();
+            d.draw_text(&format!("VELOCIDAD: {:.1} u/s   DISTANCIA AL SOL: {:.0} u", speed, sun_distance), 20, 95, 14, Color::LIGHTGRAY);
         } else {
             d.draw_text("MODO ACTIVO: 1 - MODO ARCADE", 20, 70, 14, Color::SKYBLUE);
         }
 
         if let Some(name) = active_planet {
-            d.draw_text(&format!("OBJETIVO AISLADO EN RANGO: {}", name), 20, 95, 16, Color::YELLOW);
+            let target_y = if real_scale_mode { 120 } else { 95 };
+            d.draw_text(&format!("OBJETIVO AISLADO EN RANGO: {}", name), 20, target_y, 16, Color::YELLOW);
         }
     }
 }
