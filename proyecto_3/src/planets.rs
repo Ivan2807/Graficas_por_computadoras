@@ -1,12 +1,163 @@
 use crate::framebuffer::{Framebuffer, Pixel};
 use crate::mesh::Mesh;
 
+fn surface_color(name: &str, point: (f32, f32, f32)) -> Pixel {
+    let (x, y, z) = point;
+    let broad_noise = (x * 7.0 + (z * 4.0).sin()).sin()
+        + (z * 6.0 - y * 3.0).cos()
+        + (x * 4.0 + y * 8.0).sin() * 0.55;
+    let fine_noise = (x * 23.0 + z * 17.0).sin() * (y * 19.0 - z * 13.0).cos();
+
+    match name {
+        "Moho" => {
+            let shade = (broad_noise * 13.0 + fine_noise * 8.0).clamp(-25.0, 25.0);
+            Pixel {
+                r: (145.0 + shade) as u8,
+                g: (103.0 + shade * 0.75) as u8,
+                b: (73.0 + shade * 0.55) as u8,
+                a: 255,
+            }
+        }
+        "Eve" => {
+            let clouds = (y * 34.0 + (x * 8.0 + z * 5.0).sin() * 1.8
+                + broad_noise * 0.7)
+                .sin();
+            let light = (clouds * 18.0 + fine_noise * 5.0).clamp(-23.0, 23.0);
+            Pixel {
+                r: (164.0 + light) as u8,
+                g: (88.0 + light * 0.62) as u8,
+                b: (194.0 + light * 0.9) as u8,
+                a: 255,
+            }
+        }
+        "Kerbin" => {
+            let land = broad_noise + fine_noise * 0.28;
+            if y.abs() > 0.88 {
+                Pixel { r: 222, g: 231, b: 229, a: 255 }
+            } else if land > 0.43 {
+                Pixel { r: 62, g: 145, b: 76, a: 255 }
+            } else if land > 0.27 {
+                Pixel { r: 166, g: 155, b: 103, a: 255 }
+            } else {
+                let clouds = (y * 29.0 + (x * 10.0 + z * 7.0).sin() * 2.0
+                    + fine_noise)
+                    .sin();
+                if clouds > 0.91 {
+                    Pixel { r: 205, g: 220, b: 229, a: 255 }
+                } else {
+                    Pixel { r: 39, g: 105, b: 190, a: 255 }
+                }
+            }
+        }
+        "Duna" => {
+            if y.abs() > 0.87 {
+                Pixel { r: 220, g: 205, b: 178, a: 255 }
+            } else {
+                let terrain = (broad_noise * 12.0 + fine_noise * 9.0).clamp(-20.0, 22.0);
+                Pixel {
+                    r: (205.0 + terrain) as u8,
+                    g: (91.0 + terrain * 0.58) as u8,
+                    b: (52.0 + terrain * 0.4) as u8,
+                    a: 255,
+                }
+            }
+        }
+        "Mun" => {
+            let craters = (x * 9.0 + (z * 6.0).cos()).sin()
+                + (z * 10.0 - y * 7.0).cos();
+            let shade = (craters * 13.0 + fine_noise * 5.0).clamp(-25.0, 25.0);
+            Pixel {
+                r: (166.0 + shade) as u8,
+                g: (163.0 + shade) as u8,
+                b: (155.0 + shade) as u8,
+                a: 255,
+            }
+        }
+        "Laythe" => {
+            let land = broad_noise + fine_noise * 0.25;
+            if y.abs() > 0.91 {
+                Pixel { r: 203, g: 220, b: 219, a: 255 }
+            } else if land > 0.5 {
+                Pixel { r: 151, g: 166, b: 113, a: 255 }
+            } else {
+                Pixel { r: 54, g: 145, b: 169, a: 255 }
+            }
+        }
+        "Jool" => {
+            let bands = (y * 31.0 + (x * 5.0 + z * 4.0).sin() * 1.6 + broad_noise * 0.22)
+                .sin();
+            let storm = ((x - 0.33) / 0.34).powi(2)
+                + ((y + 0.18) / 0.16).powi(2)
+                + ((z - 0.55) / 0.45).powi(2);
+            if storm < 1.0 {
+                Pixel { r: 196, g: 113, b: 69, a: 255 }
+            } else if bands > 0.42 {
+                Pixel { r: 170, g: 204, b: 119, a: 255 }
+            } else if bands < -0.5 {
+                Pixel { r: 91, g: 151, b: 83, a: 255 }
+            } else {
+                Pixel { r: 128, g: 185, b: 99, a: 255 }
+            }
+        }
+        _ => Pixel { r: 180, g: 180, b: 180, a: 255 },
+    }
+}
+
+fn add_star_light(background: Pixel, star: Pixel, intensity: f32) -> Pixel {
+    let add = |base: u8, light: u8| {
+        (base as f32 + light as f32 * intensity).clamp(0.0, 255.0) as u8
+    };
+    Pixel {
+        r: add(background.r, star.r),
+        g: add(background.g, star.g),
+        b: add(background.b, star.b),
+        a: 255,
+    }
+}
+
+fn star_intensity(time: f32, phase: f32, speed: f32) -> f32 {
+    0.72 + 0.28 * (time * speed + phase).sin()
+}
+
+fn next_random(seed: &mut u64) -> f32 {
+    *seed ^= *seed << 13;
+    *seed ^= *seed >> 7;
+    *seed ^= *seed << 17;
+    (*seed >> 40) as f32 / (1u32 << 24) as f32
+}
+
+fn radical_inverse(mut index: usize, base: usize) -> f32 {
+    let mut value = 0.0;
+    let mut denominator = 1.0;
+    while index > 0 {
+        denominator *= base as f32;
+        value += (index % base) as f32 / denominator;
+        index /= base;
+    }
+    value
+}
+
+struct Star {
+    direction: (f32, f32, f32),
+    color: Pixel,
+    twinkle_phase: f32,
+    twinkle_speed: f32,
+}
+
+struct ShootingStar {
+    longitude: f32,
+    latitude: f32,
+    longitude_speed: f32,
+    latitude_speed: f32,
+    age: f32,
+    lifetime: f32,
+}
+
 pub struct Moon {
     pub name: &'static str,
     pub distance: f32,
     pub speed: f32,
     pub radius: f32,
-    pub color: Pixel,
     pub angle: f32,
     pub mesh: Mesh,
 }
@@ -31,14 +182,18 @@ pub struct Planet {
 pub struct SolarSystem {
     pub planets: Vec<Planet>,
     pub sun_mesh: Mesh,
-    stars: Vec<(f32, f32, f32, Pixel)>,
+    stars: Vec<Star>,
+    animation_time: f32,
+    shooting_stars: Vec<ShootingStar>,
+    shooting_star_timer: f32,
+    random_seed: u64,
 }
 
 impl SolarSystem {
     pub fn new() -> Self {
         let sun_mesh = Mesh::sphere(16, 16, 1.0);
-        let planet_mesh = Mesh::sphere(12, 12, 1.0);
-        let moon_mesh = Mesh::sphere(8, 8, 1.0);
+        let planet_mesh = Mesh::sphere(20, 28, 1.0);
+        let moon_mesh = Mesh::sphere(12, 16, 1.0);
         let star_count = 72000;
         let random = |seed: usize, salt: f32| {
             let value = (seed as f32 * 12.9898 + salt * 78.233).sin() * 43_758.547;
@@ -46,7 +201,9 @@ impl SolarSystem {
         };
         let cloud_cells = 96;
         let stars = (0..star_count).map(|i| {
-            let longitude = random(i, 9.0) * std::f32::consts::TAU;
+            let longitude = (radical_inverse(i + 1, 2) + random(i, 9.0) / star_count as f32)
+                .fract()
+                * std::f32::consts::TAU;
             let cell_position = longitude / std::f32::consts::TAU * cloud_cells as f32;
             let cell = cell_position.floor() as usize % cloud_cells;
             let next_cell = (cell + 1) % cloud_cells;
@@ -54,19 +211,19 @@ impl SolarSystem {
             let cell_noise = |index: usize, salt: f32| random(index, salt) * 2.0 - 1.0;
             let offset = cell_noise(cell, 21.0) * (1.0 - blend)
                 + cell_noise(next_cell, 21.0) * blend;
-            let local_width = 0.035 + (random(cell, 22.0) * (1.0 - blend)
-                + random(next_cell, 22.0) * blend) * 0.16;
+            let local_width = 0.045 + (random(cell, 22.0) * (1.0 - blend)
+                + random(next_cell, 22.0) * blend) * 0.2;
             let center_line = (longitude * 1.35 + (longitude * 3.1).sin() * 0.24).sin() * 0.15
                 + (longitude * 3.7 + 1.2).sin() * 0.065
                 + (longitude * 8.3).sin() * 0.022
                 + offset * 0.13;
-            let y = if i % 10 < 2 {
+            let y = if i % 10 == 0 {
                 center_line + (random(i, 10.0) - 0.5 + random(i, 11.0) - 0.5) * local_width * 1.7
-            } else if i % 10 < 4 {
+            } else if i % 10 < 3 {
                 center_line + (random(i, 12.0) - 0.5 + random(i, 15.0) - 0.5) * (0.8 + local_width)
             } else {
                 random(i, 13.0) * 2.0 - 1.0
-            }.clamp(-0.98, 0.98);
+            }.clamp(-1.0, 1.0);
             let ring = (1.0 - y * y).sqrt();
             let (x, z) = (ring * longitude.cos(), ring * longitude.sin());
             let pulse = match i % 8 { 0 | 1 => 1.7, 2 | 3 => 1.3, 4 | 5 => 0.9, _ => 0.58 };
@@ -76,7 +233,12 @@ impl SolarSystem {
                 1 => Pixel { r: 255, g: 220, b: 180, a: 255 },
                 _ => Pixel { r: variation.saturating_sub(12), g: variation, b: variation.saturating_add(24), a: 255 },
             };
-            (x, y, z, color)
+            Star {
+                direction: (x, y, z),
+                color,
+                twinkle_phase: random(i, 31.0) * std::f32::consts::TAU,
+                twinkle_speed: 0.8 + random(i, 32.0) * 2.2,
+            }
         }).collect();
 
 
@@ -84,6 +246,10 @@ impl SolarSystem {
         Self {
             sun_mesh,
             stars,
+            animation_time: 0.0,
+            shooting_stars: Vec::new(),
+            shooting_star_timer: 1.5,
+            random_seed: 0x9E37_79B9_7F4A_7C15,
             planets: vec![
                 Planet { 
                     name: "Moho", distance: 90.0, speed: 1.2, radius: 4.0, 
@@ -105,7 +271,7 @@ impl SolarSystem {
                     moons: vec![
                         Moon {
                             name: "Mun", distance: 42.0, speed: 3.0, radius: 2.5,
-                            color: Pixel { r: 180, g: 180, b: 180, a: 255 }, angle: 0.0,
+                            angle: 0.0,
                             mesh: moon_mesh.clone(),
                         }
                     ], 
@@ -125,7 +291,7 @@ impl SolarSystem {
                     moons: vec![
                         Moon {
                             name: "Laythe", distance: 75.0, speed: 2.8, radius: 3.5,
-                            color: Pixel { r: 100, g: 150, b: 220, a: 255 }, angle: 1.0,
+                            angle: 1.0,
                             mesh: moon_mesh.clone(),
                         }
                     ],
@@ -136,6 +302,7 @@ impl SolarSystem {
     }
 
     pub fn update(&mut self, dt: f32, real_scale_mode: bool) {
+        self.animation_time += dt;
         let speed_multiplier = if !real_scale_mode { 1.4 } else { 0.12 }; // Órbita ultralenta y majestuosa en Modo 2
 
         for p in &mut self.planets {
@@ -144,6 +311,33 @@ impl SolarSystem {
             for m in &mut p.moons {
                 m.angle += m.speed * dt * 0.5 * speed_multiplier;
             }
+        }
+
+        if real_scale_mode {
+            self.shooting_star_timer -= dt;
+            while self.shooting_star_timer <= 0.0 {
+                let longitude = next_random(&mut self.random_seed) * std::f32::consts::TAU;
+                let latitude = (next_random(&mut self.random_seed) - 0.5) * 1.3;
+                let direction = if next_random(&mut self.random_seed) < 0.5 { -1.0 } else { 1.0 };
+                let speed = 0.22 + next_random(&mut self.random_seed) * 0.22;
+                self.shooting_stars.push(ShootingStar {
+                    longitude,
+                    latitude,
+                    longitude_speed: speed * direction,
+                    latitude_speed: (next_random(&mut self.random_seed) - 0.5) * 0.12,
+                    age: 0.0,
+                    lifetime: 0.7 + next_random(&mut self.random_seed) * 0.6,
+                });
+                self.shooting_star_timer += 2.0 + next_random(&mut self.random_seed) * 3.0;
+            }
+
+            for star in &mut self.shooting_stars {
+                star.age += dt;
+                star.longitude = (star.longitude + star.longitude_speed * dt)
+                    .rem_euclid(std::f32::consts::TAU);
+                star.latitude = (star.latitude + star.latitude_speed * dt).clamp(-1.3, 1.3);
+            }
+            self.shooting_stars.retain(|star| star.age < star.lifetime);
         }
     }
 
@@ -220,15 +414,8 @@ impl SolarSystem {
         }
 
         if real_scale_mode {
-            for (i, (star_x, star_y, star_z, color)) in self.stars.iter().enumerate() {
-                let parallax = match i % 10 { 0 => 0.000035, 1..=2 => 0.000012, _ => 0.000002 };
-                let world_x = star_x - cam_pos.0 * parallax;
-                let world_y = star_y - cam_pos.1 * parallax;
-                let world_z = star_z - (cam_pos.2 + 40.0) * parallax;
-                let length = (world_x * world_x + world_y * world_y + world_z * world_z).sqrt();
-                let world_x = world_x / length;
-                let world_y = world_y / length;
-                let world_z = world_z / length;
+            for (i, star) in self.stars.iter().enumerate() {
+                let (world_x, world_y, world_z) = star.direction;
                 let view_x = world_x * cos_y + world_z * sin_y;
                 let yaw_z = -world_x * sin_y + world_z * cos_y;
                 let view_y = world_y * cos_x - yaw_z * sin_x;
@@ -239,21 +426,82 @@ impl SolarSystem {
                 let sy = (view_y * fov / view_z + cy) as i32;
                 if sx >= 0 && sx < fb.width as i32 && sy >= 0 && sy < fb.height as i32 {
                     let idx = sy as usize * fb.width + sx as usize;
-                    fb.color_buffer[idx] = *color;
-                    // El núcleo queda definido y el halo redondo evita que las estrellas parezcan bloques.
+                    let intensity = star_intensity(
+                        self.animation_time,
+                        star.twinkle_phase,
+                        star.twinkle_speed,
+                    );
+                    fb.color_buffer[idx] =
+                        add_star_light(fb.color_buffer[idx], star.color, intensity * 0.9);
                     if i % 2 == 0 {
-                        let halo = Pixel { r: color.r / 3, g: color.g / 3, b: color.b / 3, a: 255 };
-                        let faint = Pixel { r: color.r / 8, g: color.g / 8, b: color.b / 8, a: 255 };
                         for (dx, dy, tint) in [
-                            (-1, 0, halo), (1, 0, halo), (0, -1, halo), (0, 1, halo),
-                            (-1, -1, faint), (1, -1, faint), (-1, 1, faint), (1, 1, faint),
+                            (-1, 0, 0.24), (1, 0, 0.24), (0, -1, 0.24), (0, 1, 0.24),
+                            (-1, -1, 0.08), (1, -1, 0.08), (-1, 1, 0.08), (1, 1, 0.08),
                         ] {
                             let hx = sx + dx;
                             let hy = sy + dy;
                             if hx >= 0 && hx < fb.width as i32 && hy >= 0 && hy < fb.height as i32 {
-                                fb.color_buffer[hy as usize * fb.width + hx as usize] = tint;
+                                let halo_idx = hy as usize * fb.width + hx as usize;
+                                fb.color_buffer[halo_idx] = add_star_light(
+                                    fb.color_buffer[halo_idx],
+                                    star.color,
+                                    tint * intensity,
+                                );
                             }
                         }
+                    }
+                }
+            }
+
+            for star in &self.shooting_stars {
+                let project_direction = |longitude: f32, latitude: f32| -> Option<(i32, i32)> {
+                    let cos_latitude = latitude.cos();
+                    let world_x = cos_latitude * longitude.cos();
+                    let world_y = latitude.sin();
+                    let world_z = cos_latitude * longitude.sin();
+                    let view_x = world_x * cos_y + world_z * sin_y;
+                    let yaw_z = -world_x * sin_y + world_z * cos_y;
+                    let view_y = world_y * cos_x - yaw_z * sin_x;
+                    let view_z = world_y * sin_x + yaw_z * cos_x;
+                    if view_z <= 0.1 {
+                        return None;
+                    }
+                    Some((
+                        (view_x * fov / view_z + cx) as i32,
+                        (view_y * fov / view_z + cy) as i32,
+                    ))
+                };
+
+                let trail_time = star.age.min(0.16);
+                let tail_longitude =
+                    star.longitude - star.longitude_speed * trail_time;
+                let tail_latitude = star.latitude - star.latitude_speed * trail_time;
+                let Some((head_x, head_y)) =
+                    project_direction(star.longitude, star.latitude)
+                else {
+                    continue;
+                };
+                let Some((tail_x, tail_y)) = project_direction(tail_longitude, tail_latitude)
+                else {
+                    continue;
+                };
+
+                let steps = (head_x - tail_x).abs().max((head_y - tail_y).abs()).max(1);
+                let fade_in = (star.age / 0.12).clamp(0.0, 1.0);
+                let fade_out = ((star.lifetime - star.age) / 0.2).clamp(0.0, 1.0);
+                let brightness = fade_in.min(fade_out);
+                for step in 0..=steps {
+                    let progress = step as f32 / steps as f32;
+                    let x = tail_x + ((head_x - tail_x) as f32 * progress) as i32;
+                    let y = tail_y + ((head_y - tail_y) as f32 * progress) as i32;
+                    if x >= 0 && x < fb.width as i32 && y >= 0 && y < fb.height as i32 {
+                        let intensity = brightness * (0.18 + progress * 0.72);
+                        let idx = y as usize * fb.width + x as usize;
+                        fb.color_buffer[idx] = add_star_light(
+                            fb.color_buffer[idx],
+                            Pixel { r: 220, g: 235, b: 255, a: 255 },
+                            intensity,
+                        );
                     }
                 }
             }
@@ -454,19 +702,9 @@ impl SolarSystem {
             }
 
             for face in &p.mesh.faces {
-                let mut v_loc0 = p.mesh.vertices[face[0]];
-                let mut v_loc1 = p.mesh.vertices[face[1]];
-                let mut v_loc2 = p.mesh.vertices[face[2]];
-
-                let deform = |v: (f32, f32, f32)| -> (f32, f32, f32) {
-                    let noise = (v.0 * 8.0).sin() * (v.1 * 8.0).cos() * (v.2 * 8.0).sin();
-                    let factor = 1.0 + noise * 0.06;
-                    (v.0 * factor, v.1 * factor, v.2 * factor)
-                };
-
-                v_loc0 = deform(v_loc0);
-                v_loc1 = deform(v_loc1);
-                v_loc2 = deform(v_loc2);
+                let v_loc0 = p.mesh.vertices[face[0]];
+                let v_loc1 = p.mesh.vertices[face[1]];
+                let v_loc2 = p.mesh.vertices[face[2]];
 
                 let v0 = transform(v_loc0, p_pos, actual_rad, p.rotation_angle);
                 let v1 = transform(v_loc1, p_pos, actual_rad, p.rotation_angle);
@@ -496,32 +734,49 @@ impl SolarSystem {
                 let lnz = to_sun_z / ts_len;
 
                 let dot = (nx * lnx + ny * lny + nz * lnz).max(0.15);
-                fb.draw_triangle(v0, v1, v2, p.color, dot);
+                let color = surface_color(p.name, (avg_x, avg_y, avg_z));
+                fb.draw_triangle(v0, v1, v2, color, dot);
             }
 
-            // Anillos
+            // Bandas y huecos del sistema de anillos de Jool.
             if p.has_rings {
-                let ring_segments = 36;
-                let inner_r = actual_rad * 1.4;
-                let outer_r = actual_rad * 2.3;
-                let ring_color = Pixel { r: 170, g: 160, b: 130, a: 190 };
+                let ring_segments = 128;
+                let ring_bands = [
+                    (1.25, 1.48, Pixel { r: 163, g: 157, b: 133, a: 255 }),
+                    (1.50, 1.76, Pixel { r: 199, g: 187, b: 151, a: 255 }),
+                    (1.84, 2.10, Pixel { r: 133, g: 139, b: 119, a: 255 }),
+                    (2.12, 2.28, Pixel { r: 181, g: 173, b: 146, a: 255 }),
+                    (2.34, 2.58, Pixel { r: 145, g: 150, b: 133, a: 255 }),
+                    (2.62, 2.82, Pixel { r: 191, g: 181, b: 150, a: 255 }),
+                ];
 
-                for r_seg in 0..ring_segments {
-                    let theta1 = (r_seg as f32) * 2.0 * std::f32::consts::PI / (ring_segments as f32);
-                    let theta2 = ((r_seg + 1) as f32) * 2.0 * std::f32::consts::PI / (ring_segments as f32);
+                for (inner_ratio, outer_ratio, ring_color) in ring_bands {
+                    let inner_r = actual_rad * inner_ratio;
+                    let outer_r = actual_rad * outer_ratio;
+                    for r_seg in 0..ring_segments {
+                        let theta1 =
+                            (r_seg as f32) * 2.0 * std::f32::consts::PI / ring_segments as f32;
+                        let theta2 = ((r_seg + 1) as f32) * 2.0 * std::f32::consts::PI
+                            / ring_segments as f32;
 
-                    let p1_in = (inner_r * theta1.cos(), 0.0, inner_r * theta1.sin());
-                    let p1_out = (outer_r * theta1.cos(), 0.0, outer_r * theta1.sin());
-                    let p2_out = (outer_r * theta2.cos(), 0.0, outer_r * theta2.sin());
-                    let p2_in = (inner_r * theta2.cos(), 0.0, inner_r * theta2.sin());
+                        let tilt = 0.18;
+                        let tilted = |radius: f32, angle: f32| {
+                            let z = radius * angle.sin();
+                            (radius * angle.cos(), z * tilt, z)
+                        };
+                        let p1_in = tilted(inner_r, theta1);
+                        let p1_out = tilted(outer_r, theta1);
+                        let p2_out = tilted(outer_r, theta2);
+                        let p2_in = tilted(inner_r, theta2);
 
-                    let tv1 = transform(p1_in, p_pos, 1.0, 0.0);
-                    let tv2 = transform(p1_out, p_pos, 1.0, 0.0);
-                    let tv3 = transform(p2_out, p_pos, 1.0, 0.0);
-                    let tv4 = transform(p2_in, p_pos, 1.0, 0.0);
+                        let tv1 = transform(p1_in, p_pos, 1.0, 0.0);
+                        let tv2 = transform(p1_out, p_pos, 1.0, 0.0);
+                        let tv3 = transform(p2_out, p_pos, 1.0, 0.0);
+                        let tv4 = transform(p2_in, p_pos, 1.0, 0.0);
 
-                    fb.draw_triangle(tv1, tv2, tv3, ring_color, 0.8);
-                    fb.draw_triangle(tv1, tv3, tv4, ring_color, 0.8);
+                        fb.draw_triangle(tv1, tv2, tv3, ring_color, 0.8);
+                        fb.draw_triangle(tv1, tv3, tv4, ring_color, 0.8);
+                    }
                 }
             }
 
@@ -555,11 +810,38 @@ impl SolarSystem {
                              + (avg_y / n_len) * (to_sun_y / ts_len) 
                              + (avg_z / n_len) * (to_sun_z / ts_len)).max(0.15);
 
-                    fb.draw_triangle(v0, v1, v2, m.color, dot);
+                    let color = surface_color(m.name, (avg_x, avg_y, avg_z));
+                    fb.draw_triangle(v0, v1, v2, color, dot);
                 }
             }
         }
 
         targeted_name
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{radical_inverse, star_intensity};
+
+    #[test]
+    fn stars_dim_without_turning_off() {
+        let bright = star_intensity(std::f32::consts::FRAC_PI_2, 0.0, 1.0);
+        let dim = star_intensity(3.0 * std::f32::consts::FRAC_PI_2, 0.0, 1.0);
+
+        assert!((bright - 1.0).abs() < 0.001);
+        assert!(dim > 0.4);
+        assert!(dim < bright);
+    }
+
+    #[test]
+    fn star_longitudes_are_evenly_distributed() {
+        let mut bins = [0; 64];
+        for i in 1..=1024 {
+            let bin = (radical_inverse(i, 2) * bins.len() as f32) as usize;
+            bins[bin] += 1;
+        }
+
+        assert!(bins.iter().all(|count| *count == 16));
     }
 }
